@@ -135,6 +135,10 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
             extra_params["version"] = self.transcriber_config.version
         if self.transcriber_config.keywords:
             extra_params["keywords"] = self.transcriber_config.keywords
+        if self.transcriber_config.detect_language:
+            extra_params["detect_language"] = self.transcriber_config.detect_language
+        if self.transcriber_config.smart_format:
+            extra_params["smart_format"] = self.transcriber_config.smart_format
         if self.transcriber_config.endpointing_config and (
             isinstance(
                 self.transcriber_config.endpointing_config,

@@ -10,8 +10,8 @@ from .model import BaseModel, TypedModel
 from .vector_db import VectorDBConfig
 
 FILLER_AUDIO_DEFAULT_SILENCE_THRESHOLD_SECONDS = 0.5
-LLM_AGENT_DEFAULT_TEMPERATURE = 1.0
-LLM_AGENT_DEFAULT_MAX_TOKENS = 256
+LLM_AGENT_DEFAULT_TEMPERATURE = 0.4
+LLM_AGENT_DEFAULT_MAX_TOKENS = 500
 LLM_AGENT_DEFAULT_MODEL_NAME = "text-curie-001"
 CHAT_GPT_AGENT_DEFAULT_MODEL_NAME = "gpt-3.5-turbo-1106"
 CHAT_GPT_AGENT_16K_MODEL_NAME = "gpt-3.5-turbo-0613-16k"
@@ -91,7 +91,7 @@ class CutOffResponse(BaseModel):
 
 
 class AgentConfig(TypedModel, type=AgentType.BASE.value):  # type: ignore
-    initial_message: Optional[BaseMessage] = None
+    initial_message: Optional[BaseMessage] = "Welcome to Meesho, how can I help you today?"
     generate_responses: bool = True
     allowed_idle_time_seconds: Optional[float] = None
     num_check_human_present_times: int = 0

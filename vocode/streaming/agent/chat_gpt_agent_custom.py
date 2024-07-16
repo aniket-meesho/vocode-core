@@ -1,491 +1,473 @@
 import os
-import ast
+import random
+from typing import Any, AsyncGenerator, Dict, List, Optional, TypeVar, Union
+
+import sentry_sdk
+from loguru import logger
+from openai import DEFAULT_MAX_RETRIES as OPENAI_DEFAULT_MAX_RETRIES
+from openai import AsyncAzureOpenAI, AsyncOpenAI, NotFoundError, RateLimitError
+
+from vocode import sentry_span_tags
+from vocode.streaming.action.abstract_factory import AbstractActionFactory
+from vocode.streaming.action.default_factory import DefaultActionFactory
+from vocode.streaming.agent.base_agent import GeneratedResponse, RespondAgent, StreamedResponse
+from vocode.streaming.agent.openai_utils import (
+    format_openai_chat_messages_from_transcript,
+    openai_get_tokens,
+    vector_db_result_to_openai_chat_message,
+)
+from vocode.streaming.agent.streaming_utils import collate_response_async, stream_response_async
+from vocode.streaming.models.actions import FunctionCallActionTrigger
+from vocode.streaming.models.agent import ChatGPTAgentConfig
+from vocode.streaming.models.events import Sender
+from vocode.streaming.models.message import BaseMessage, BotBackchannel, LLMToken
+from vocode.streaming.models.transcript import Message
+from vocode.streaming.vector_db.factory import VectorDBFactory
+from vocode.utils.sentry_utils import CustomSentrySpans, sentry_create_span
+import requests
 import json
-import numpy as np
-import openai
-# from langchain.embeddings import OpenAIEmbeddings
-# from llama_index import LangchainEmbedding
-from datetime import datetime,timedelta
-from qdrant_client.http import models
-from llama_index import ServiceContext
-from llama_index import StorageContext, load_index_from_storage
-from llama_index.llms import AzureOpenAI
-from functools import wraps
-from app.exceptions.CustomException import CustomException
-from constants import constants
-from middleware.statsdmiddleware import count_this, time_this
-from services.helpers.logger import get_logger
-from services.llm_router.llm_router import get_llm_provider_using_routing_module_for_emb, get_llm_provider_using_routing_module
-import services.llms.models.azure_models as azure_models
-import services.llms.models.openai_models as openai_models
-from services.llm_router.router_config import Config as RConfig
-from app.config import CONFIG
-from circuitbreakers.emb_cb import emb_circuit_breaker
-from services.intent.intent_dict_v2 import intent_dict as intent_dict_v2, intent_v2_to_v1, intent_helper
-from services.intent.intent_index_creator import shipped_intents, ordered_intents, cancelled_intents, exchanged_intents, return_intents, delivered_intents
-from app.ext_client_conn import get_qdrant_client
-from services.llms import llm_service
-import services.sop.cancelled_sop_service as cancelled_sop_service
-import services.sop.delivered_sop_service as delivered_sop_service
-import services.sop.exchanged_sop_service as exchanged_sop_service
-import services.sop.ordered_sop_service as ordered_sop_service
-import services.sop.return_sop_service as return_sop_service
-import services.sop.shipped_sop_service as shipped_sop_service
+import asyncio
 
-logger = get_logger()
+ChatGPTAgentConfigType = TypeVar("ChatGPTAgentConfigType", bound=ChatGPTAgentConfig)
 
-class IntentDetector:
-    def __init__(self, request_body) -> None:
-        self.request_body = request_body
-        self.llm_provider, self.fallback_providers, _ = get_llm_provider_using_routing_module_for_emb(self.request_body)
-        self.model_type = None
-        self._set_roomcode()
 
-    def _set_roomcode(self):
-        roomcode = self.request_body.get(constants.ROOM_CODE)
-        if roomcode is None:
-            logger.error(f"roomcode is coming as None in Intent Detection, setting it to '0'")
-            roomcode = '0'
-        self.roomcode = roomcode
+def instantiate_openai_client(agent_config: ChatGPTAgentConfig, model_fallback: bool = False):
+    if agent_config.azure_params:
+        return AsyncAzureOpenAI(
+            azure_endpoint=agent_config.azure_params.base_url,
+            api_key=agent_config.azure_params.api_key,
+            api_version=agent_config.azure_params.api_version,
+            max_retries=0 if model_fallback else OPENAI_DEFAULT_MAX_RETRIES,
+        )
+    else:
+        if agent_config.openai_api_key is not None:
+            logger.info("Using OpenAI API key override")
+        if agent_config.base_url_override is not None:
+            logger.info(f"Using OpenAI base URL override: {agent_config.base_url_override}")
+        return AsyncOpenAI(
+            api_key=agent_config.openai_api_key or os.environ["OPENAI_API_KEY"],
+            base_url=agent_config.base_url_override or "https://api.openai.com/v1",
+            max_retries=0 if model_fallback else OPENAI_DEFAULT_MAX_RETRIES,
+        )
 
-    @staticmethod
-    def convert_chat_to_string(chat_input):
-        chat_string = ""
-        for chat_message in chat_input:
-            chat_string += chat_message.get("role") + ": " + chat_message.get("content") + "\n"
-        return chat_string
-    
-    def get_index(self, provider, intent):
-        provider_vendor = 'OPENAI' if provider == RConfig.OPENAI_PROVIDER_NAME_FOR_EMB else 'AZURE'
-        storage_context = StorageContext.from_defaults(persist_dir=os.path.join(os.path.dirname(os.path.abspath(__file__)), f'{provider_vendor}/{intent}'))
-        index = load_index_from_storage(storage_context, service_context=self.get_service_context(provider))
-        return index
+def get_shipped_intent_dict():
+    shipped_intents = {
+        "shipped_intent_1": "User Wants to Know about Estimated Delivery Date or when their order will be delivered or user wants delivery update.",
+        "shipped_intent_2": "User Wants Delivery on a Specific Date which is earlier or later than expected delivery date.",
+        "shipped_intent_3": "User no longer wants to receive the order and User requests to cancel the order or would want to cancel the order",
+        "shipped_intent_4": "User Wants to Change Delivery Address or Mobile Number linked with the order",
+        "shipped_intent_5": "User claims they have received the order (order is delivered) & want to return it back or wants to exchange it",
+        "shipped_intent_6": "User complained that the product is in my location but not received any message on out for delivery",
+        "shipped_intent_7": "User says that order was not delivered when an attempt was made, and wants order to be re-attempted",
+        "shipped_intent_9": "User complains that tracking is showing that product is 'routed incorrectly' or 'lost in transit'",
+        "shipped_intent_10": "User reports that the delivery person has collected (or has asked for) the COD amount via UPI before reaching the User location.",
+        "shipped_intent_11": "User Complains that Product was Cancelled but they are yet to receive the refund.",
+        "shipped_intent_12": "User request a call-back or user wants to connect over phone call with customer care",
+        "shipped_intent_13": "User wants to know the Delivery agent phone number or want to contact them",
+        "shipped_intent_else": "Anything else"
+    }
+    return shipped_intents
 
-    def set_llm_provider(self, llm_provider):
-        self.llm_provider = llm_provider
-
-    def set_fallback_providers(self, fallback_provders):
-        self.fallback_providers = fallback_provders
-    
-    def get_llm_provider(self):
-        return self.llm_provider
-    
-    def get_fallback_providers(self):
-        return self.fallback_providers
-    
-    def _get_llm_emb_instance(self, llm_provider):
-        if llm_provider == RConfig.OPENAI_PROVIDER_NAME:
-            llm_instance, emb_instance, model_type = openai_models.get_llm_and_embedding_instance_from_openai(llm_provider, RConfig.ADA002_NAME, self.request_body)
-        else:
-            llm_instance, emb_instance, model_type = azure_models.get_llm_and_embedding_instance_from_azure(llm_provider, RConfig.ADA002_NAME)
-        self.model_type = model_type
-        return llm_instance, emb_instance
-    
-    def get_service_context(self, llm_provider):
-        llm_instance, emb_instance = self._get_llm_emb_instance(llm_provider)
-        return ServiceContext.from_defaults(llm=llm_instance, embed_model=emb_instance)
-    
-    #make this and try_llm_provider better, not the ideal way
-    @emb_circuit_breaker
-    @time_this(
-        constants.STATSD_LLM_PROVIDER_LATENCY,
-        tags={
-          constants.USE_CASE: 'intent_detection',
+def get_shipped_sop(intent):
+    sops = {
+        "shipped_intent_1": {
+            "resolution": "Inform the user that their product would be delivered by {expected_delivery_date}. If {current_date} = {expected_delivery_date} & user claims that product has not been delivered, then we need to ask user to wait till the end of the day for delivery to take place.",
+            "functions_required": False,
+            "functions": []
         },
-        tag_value_paths={
-            constants.STATSD_LLM_PROVIDER_NAME: ['provider'],
-            constants.STATSD_LLM_PROVIDER_MODEL_TYPE: ['model_type'],
+        "shipped_intent_2": {
+            "resolution": "Inform the user that, unfortunately, it is not part of current meesho policy to schedule a delivery for any date other than the {expected_delivery_date}. Let them know that we will deliver the product on or before the expected delivery date. If user says that product has reached nearby location & they want to receive it early, assure them product will only be delivered by {expected_delivery_date}. If {current_date} = {expected_delivery_date} & user claims that product has not been delivered, then we need to ask user to wait till the end of the day for delivery to take place.",
+            "functions_required": False,
+            "functions": []
+        },
+        "shipped_intent_3": {
+            "resolution": "Inform user that order cannot be cancelled now as it has already been shipped. If user makes further requests, suggest user that if they no longer want the order, they can refuse to accept the package when the delivery person arrives with the package.",
+            "functions_required": False,
+            "functions": []
+        },
+        "shipped_intent_4": {
+            "resolution": "Inform user that it will not be possible to change the delivery address or mobile number as the product is already shipped now.",
+            "functions_required": False,
+            "functions": []
+        },
+        "shipped_intent_5": {
+            "resolution": "Politely ask the user if it has been more than 24 hours from the time of the actual delivery. \nIf it hasn't been more than 24 hours, kindly request the user to wait until the system updates the status.\nIf the user confirms that it has been more than 24 hours since delivery then call the function escalate_to_senior with the user concern and next message as apology and telling that you are transferring the chat to the dedicated team.",
+            "functions_required": False,
+            "functions": []
+        },
+        "shipped_intent_6": {
+            "resolution": "Inform user that they will get the product by {expected_delivery_date}. They will receive the out for delivery message before that.",
+            "functions_required": False,
+            "functions": []
+        },
+        "shipped_intent_7": {
+            "resolution": "Strictly call the function escalate_to_senior with the user concern and next_message as with apology and telling that you are escalating the matter to senior stake holder. For next message use the language used by user in the messages",
+            "functions_required": False,
+            "functions": []
+        },
+        "shipped_intent_9": {
+            "resolution": "Apologise to user for the inconvenience caused. Inform user that if tracking is showing “misrouted” or “lost in a transit” then they should wait till the expected delivery date before placing a fresh order. ",
+            "functions_required": False,
+            "functions": []
+        },
+        "shipped_intent_10": {
+            "resolution": "Strictly call the function escalate_to_senior with the user concern and next_message as Reassure user that there is no need to make payment to delivery person before they have reached user location for the delivery. Apologise for the inconvenience cause by the user. Inform user that your are escalating this to dedicated team for further resolution. For next message use the language used by user in the messages",
+            "functions_required": False,
+            "functions": []
+        },
+        "shipped_intent_11": {
+            "resolution": "Let user know that since this is a COD order and product has not been delivered, it is not in Meesho's policy to refund.",
+            "functions_required": False,
+            "functions": []
+        },
+        "shipped_intent_12": {
+            "resolution": "Request user to submit a 'call me back' request through help center in Meesho app, and someone from the team will promptly assist them over the call",
+            "functions_required": False,
+            "functions": []
+        },
+        "shipped_intent_13": {
+            "resolution": "Inform the user that just before the order is out for delivery, we share an SMS with delivery agent details and kindly refer or wait for the same.",
+            "functions_required": False,
+            "functions": []
+        },
+        "shipped_intent_else": {
+            "resolution": '''
+                Go through the below 3 points and see out of the 3 situation which one is applicable to the user's message. And follow the steps accordingly.
+                Check if user's message can be answered by the Information provided in the order details, if yes then answer the query.
+                Check if user's message is continuation of previous query or request, if yes then apologise and repeat the assistant's previous message content in different form.
+                Check if the user's message is about something other than Meesho order, if yes then apologise and tell user that we can only help with Meesho order related query.
+                ''',
+            "functions_required": False,
+            "functions": []
         }
-    )
-    def get_query_resp(self, index, query, provider, model_type):
-        query_engine = index.as_query_engine()
-        response = query_engine.query(query)
-        return response
+    }
 
-    def TRY_LLM_PROVIDERS(func):
-        @wraps(func)
-        def wrapper(self, *args, **kwargs):
-            chat = IntentDetector.convert_chat_to_string(args[0])
-            index_name, sys_prompt = func(self, *args, **kwargs)
-            query = sys_prompt + ".\n chat input - \n" + chat
-            index_storage_provider = 'OPENAI' if self.llm_provider == RConfig.OPENAI_PROVIDER_NAME_FOR_EMB else 'AZURE'
-            end_state_llm_provider = '--'
-            try:
-                count_this(constants.STATSD_LLM_REQUEST, tags={
-                    "llm_provider": self.llm_provider,
-                    "use_case": "intent_detection",
-                    'model_type': self.model_type if self.model_type is not None else '--',
-                })
-                first_priority_prov = self.llm_provider
-                end_state_llm_provider = first_priority_prov
-                logger.info(f'first attempt with <{first_priority_prov}> for intent detection')
-                index = self.get_index(first_priority_prov, index_name)
-                response = self.get_query_resp(index = index, query = query, provider = index_storage_provider, model_type=self.model_type if self.model_type is not None else '--')
-                logger.info(f'model tried in first attempt: <{self.model_type}>')
-            except Exception as e1:
-                logger.error(f'{type(e1).__name__} occurred in first attempt: {self.llm_provider} failed. Error Message: {e1}. query : {query}')
-                count_this(constants.STATSD_LLM_EXCEPTION, tags={"llm_provider": self.llm_provider, "error": type(e1).__name__, "use_case": "intent_detection", 'model_type': self.model_type if self.model_type is not None else '--'})
-                for llm_prov in self.fallback_providers:
-                    try:
-                        count_this(constants.STATSD_LLM_REQUEST, tags={
-                            "llm_provider": llm_prov,
-                            "use_case": "intent_detection",
-                            'model_type': self.model_type if self.model_type is not None else '--'
-                        })
-                        end_state_llm_provider = llm_prov
-                        logger.info(f'2nd attempt with <{llm_prov}> for intent detection')
-                        index_storage_provider = 'OPENAI' if llm_prov == RConfig.OPENAI_PROVIDER_NAME_FOR_EMB else 'AZURE'
-                        index = self.get_index(llm_prov, index_name)
-                        response = self.get_query_resp(index = index, query = query, provider = index_storage_provider, model_type=self.model_type if self.model_type is not None else '--')
-                        logger.info(f'model tried in 2nd attempt: <{self.model_type}>')
-                        break
-                    except Exception as e2:
-                        end_state_llm_provider = '--'
-                        logger.error(f'{type(e2).__name__} occurred in 2nd attempt onwards: {llm_prov} failed\nError Message: {e2}')
-                        count_this(constants.STATSD_LLM_EXCEPTION, tags={"llm_provider": llm_prov, "error": type(e2).__name__, "use_case": "intent_detection"})
-            count_this(constants.STATSD_LLM_ROUTER, tags={
-                'requested': self.llm_provider,
-                'selected': end_state_llm_provider,
-                'model_type': self.model_type if self.model_type is not None else '--',
-                'index_name': index_name,
-                'use_case': 'intent_detection'
-                })
-            if end_state_llm_provider == '--':
-                logger.error(f"Fallback failed for all providers. {self.llm_provider}")
-                raise CustomException(message="Intent Detection: Fallback failed for all providers.")
-            elif self.llm_provider == end_state_llm_provider:
-                count_this(constants.STATSD_LLM_ROUTER_REQUESTED_PROVIDER_SELECTED, tags={
-                    'requested': self.llm_provider,
-                    'model_type': self.model_type if self.model_type is not None else '--',
-                    'index_name': index_name,
-                    'use_case': 'intent_detection'
-                })
-            else:
-                count_this(constants.STATSD_LLM_ROUTER_ALTERNATE_PROVIDER_SELECTED, tags={
-                    'requested': self.llm_provider,
-                    'selected': end_state_llm_provider,
-                    'model_type': self.model_type if self.model_type is not None else '--',
-                    'index_name': index_name,
-                    'use_case': 'intent_detection'
-                })
-            final_intent_detection_model = f'{index_storage_provider}_{self.model_type}'
-            RConfig.set_cloud_provider_for_intent_detection(self.roomcode, final_intent_detection_model)
-            return response.response.strip()
-        return wrapper
-    
-    
+    expected_delivery_date = "25-07-2024"
+    current_date = "18-07-2024"
+    cancel_mark_date = "15-07-2024"
 
-    @TRY_LLM_PROVIDERS
-    def get_shipped_intent(self, chat_input, intent):
-        if intent is None:
-            sys_prompt = "Based on the chat input give back the nearest user intent.And just output the intent nothing else, example - shipped_intent_1, shipped_intent_2"
-        else:
-            sys_prompt = f"Following is a part of the conversation between a user and support executive(assistant) for Meesho an ecommerce company. This is the last intent that we detected {intent}. Based on the chat input determine the intent of user's last message. If the message is continuation of previous message output the same intent.And just output the intent nothing else, example - shipped_intent_1, shipped_intent_2."
-        index_name = 'shipped_intent_index'
-        return index_name, sys_prompt
+    return sops[intent]["resoulution"].format(expected_delivery_date=expected_delivery_date,
+                                                 current_date=current_date,
+                                                 cancel_mark_date=cancel_mark_date
+                                                 )
 
-    @TRY_LLM_PROVIDERS
-    def get_ordered_intent(self, chat_input, intent):
-        if intent is None:
-            sys_prompt = "Based on the chat input give back the nearest user intent.And just output the intent nothing else, example - ordered_intent_1, ordered_intent_2"
-        else:
-            sys_prompt = f"Following is a part of the conversation between a user and support executive(assistant) for Meesho an ecommerce company. This is the last intent that we detected {intent}. Based on the chat input determine the intent of user's last message. If the message is continuation of previous message output the same intent.And just output the intent nothing else, example - ordered_intent_1, ordered_intent_2."
-        index_name = 'ordered_intent_index'
-        return index_name, sys_prompt
+def call_gpt(messages, temperature, model_name):
+    completion_url = "https://api.openai.com/v1/chat/completions"
+    headers = get_headers()
+    llm_request_data = {
+        'model': model_name,
+        'temperature': temperature,
+        'messages': messages,
+        'max_tokens': 100,
+        'response_format': { "type": "json_object" }
+    }
 
-    @TRY_LLM_PROVIDERS
-    def get_cancelled_intent(self, chat_input, intent):
-        if intent is None:
-            sys_prompt = "Based on the chat input give back the nearest user intent.And just output the intent nothing else, example - cancelled_intent_1, cancelled_intent_2"
-        else:
-            sys_prompt = f"Following is a part of the conversation between a user and support executive(assistant) for Meesho an ecommerce company. This is the last intent that we detected {intent}. Based on the chat input determine the intent of user's last message. If the message is continuation of previous message output the same intent.And just output the intent nothing else, example - cancelled_intent_1, cancelled_intent_2."
-        index_name = 'cancelled_intent_index'
-        return index_name, sys_prompt
+    response = requests.post(completion_url, headers=headers, json=llm_request_data, timeout=60)
+    return response.json()
 
-    @TRY_LLM_PROVIDERS
-    def get_exchanged_intent(self, chat_input, intent):
-        if intent is None:
-            sys_prompt = "Based on the chat input give back the nearest user intent.And just output the intent nothing else, example - exchanged_intent_1, exchanged_intent_2"
-        else:
-            sys_prompt = f"Following is a part of the conversation between a user and support executive(assistant) for Meesho an ecommerce company. This is the last intent that we detected {intent}. Based on the chat input determine the intent of user's last message. If the message is continuation of previous message output the same intent.And just output the intent nothing else, example - exchanged_intent_1, exchanged_intent_2."
-        index_name = 'exchanged_intent_index'
-        return index_name, sys_prompt
 
-    @TRY_LLM_PROVIDERS
-    def get_return_intent(self, chat_input, intent):
-        if intent is None:
-            sys_prompt = "Based on the chat input give back the nearest user intent.And just output the intent nothing else, example - return_intent_1, return_intent_2"
-        else:
-            sys_prompt = f"Following is a part of the conversation between a user and support executive(assistant) for Meesho an ecommerce company. This is the last intent that we detected {intent}. Based on the chat input determine the intent of user's last message. If the message is continuation of previous message output the same intent.And just output the intent nothing else, example - return_intent_1, return_intent_2."
-        index_name = 'return_intent_index'
-        return index_name, sys_prompt
-    
-    @TRY_LLM_PROVIDERS
-    def get_delivered_intent(self, chat_input, intent):
-        if intent is None:
-            sys_prompt = "Based on the chat input give back the nearest user intent.And just output the intent nothing else, example - deliver_intent_1, deliver_intent_2"
-        else:
-            sys_prompt = f"Following is a part of the conversation between a user and support executive(assistant) for Meesho an ecommerce company. This is the last intent that we detected {intent}. Based on the chat input determine the intent of user's last message. If the message is continuation of previous message output the same intent.And just output the intent nothing else, example - deliver_intent_1, deliver_intent_2."
-        index_name = 'delivered_intent_index'
-        return index_name, sys_prompt
-    
-class IntentDetector_v2:
-    def __init__(self):
-        pass
-
-    def get_scenario(self, details):
-        order_status = details['Order Status']
-        if order_status == constants.CANCELLED:
-            return cancelled_sop_service.determine_scenario(details)
-        if order_status == constants.SHIPPED:
-            return shipped_sop_service.determine_scenario(details)
-        if order_status == constants.DELIVERED:
-            return delivered_sop_service.determine_scenario(details)
-        if order_status == constants.RETURN:
-            return return_sop_service.determine_scenario(details)
-        if order_status == constants.ORDERED:
-            return ordered_sop_service.determine_scenario(details)
-        if order_status == constants.EXCHANGED:
-            return exchanged_sop_service.determine_scenario(details)
-
-    def convert_chat_to_string(self, chat_input):
-        chat_string = ""
-        for chat_message in chat_input:
-            chat_string += chat_message.get("role") + ": " + chat_message.get("content") + "\n"
-        return chat_string
-    
-    def get_all_user_messages(self, chat_input):
-        user_messages = []
-        for chat_message in chat_input:
-            if chat_message.get("role") == 'user':
-                user_messages.append(chat_message.get("content"))
-        return user_messages
-    
-    def fetch_sys_prompt_2(self, chat_string, shortlist_intent_dict, flag, extracted_intents = None):
-        shortlist_intent_string=''
-        for intent_id in shortlist_intent_dict:
-            shortlist_intent_string += f"{intent_id} : {shortlist_intent_dict[intent_id]}\n"
-        if flag==True:
-            final_sys_prompt = "You're the best ranked SOTA model in the world for this task -> [The task - intent classification].\n"\
+def get_intent_from_gpt(messages):
+    intent_dict = get_shipped_intent_dict()
+    system_prompt = "You're the best ranked SOTA model in the world for this task -> [The task - intent classification].\n"\
                             + "Based on the chat input give back the relevant user intent. Just output the closest intent ID nothing else, you can follow the following json format example:\n"\
                             +"{'intent_id':'intent_37'}" \
-                            + "\n\n---------------------\n"\
-                            + "Chat:\n"\
-                            + str(chat_string)\
+                            + "\n---------------------\n"\
+                            + "\nChat:\n"\
+                            + str(messages)\
                             + "\n\nIntent Dictionary:\n"\
-                            + f"{shortlist_intent_string}" + "\n---------------------\n"
-        else:
-            extracted_intents_string = ''
-            for key in extracted_intents:
-                extracted_intents_string += f"{key}, {extracted_intents[key]}\n"
-            final_sys_prompt = "You're the best ranked SOTA model in the world for this task -> [The task - intent classification].\n"\
-                            + "Based on the chat input give back the relevant user intent. Just output the closest intent ID from the Intent Dictionary and nothing else, you can follow the following json format example:\n"\
-                            +"{'intent_id':'intent_37'}" \
-                            + "\n\n---------------------\n"\
-                            + "Chat:\n"\
-                            + str(chat_string)\
-                            + "\nExtracted user intents:\n" \
-                            + f"{extracted_intents_string}" \
-                            + "\nIntent Dictionary:\n"\
-                            + f"{shortlist_intent_string}" + "intent_else : Anything else" + "\n---------------------\n"
-        return final_sys_prompt
+                            + f"{intent_dict}" + "\n---------------------\n"
     
-    def fetch_sys_prompt_1(self):
-        system_prompt = """You are world's best intent identifier.
-            User will give you an array of array of user chats.
-            Each nested array is a user messages sent in a chat.
-            Understand the whole conversation and find out the user intents in the chat.
-            There could be a possibility that multiple lines combined makes a single statement.
-            Classify it into one line intents which are unique and mutually exclusive and give the output as an array of intent names and one line description separated by ':'.
-            The output should be such that it can be parsed in a python variable directly. Don't output anything else at all.
-                    1. The intents should be at a chat level only.
-                    2. The intent of a chat(not message) should be very granular, for the same create as many intents as needed for a chat. 
-                    3. Again make sure the intents are of a chat and not each message, so understand the chat and then finalize on minimal, distinct user intents. Merge similar intents into one intent.
-                    4. The intent should not be vague, it should be very definitive.
-                    5. The output should strictly be as outlined above i.e. {'intent_name_1 : intent_description_1',...'intent_name_n : intent_description_n'}.
-            eg. INPUT - 
-            [
-                "Mera parcel abhi tk nhi aaya h",
-                "Kab tak aayega parcel",
-                "Raat hogaya h",
-                "Kitne din se to bol rhe h",
-                "Abhi tk aaya nhi h",
-                "Agar kal tk nhi aaya to Mai cancel kr dunge",
-                "Aur kbhi order nhi karuge",
-                "Ye mera last mesho order hoga",
-                "Agar iss br order nhi aaya to",
-                "Aur aap kya madad karoge",
-                "To aap kab bhejoge mera parcel",
-                "To kab aayga order",
-                "To btt kro aap",
-                "Maine 18 mar ko order Kiya tha",
-                "Itna time nhi lgta h",
-                "Apne company me btt kro",
-                "Ki kb aayga",
-                "Haa aap mera order bas de de"
-            ]
-            eg. OUTPUT(JSON) - {"Delivery status and time inquiry": "User is inquiring about the delivery status and time of their parcel.",
-            "Threat": "User is threatening to cancel the order or not order again",
-            "Escalation request": "User is asking to escalate",
-            "Urgent delivery request": "User is urgently requesting for the delivery of their order"}
+    system_prompt_found = False
+    for message in messages:
+        if "role" in message and message["role"] == "system":
+            message["content"] = system_prompt
+            system_prompt_found = True
+            break
 
-            This is to be done such that an e-commerce virtual chat assistant should be able to take unique action based on each unique intent.
-            Understand and follow the eg. Input and output very carefully."""
-        return system_prompt
-    
-    def find_closest_embeddings(self, query_embedding, group_id, client='meesho_cx'):
-        qdrant_client = get_qdrant_client()
-        search_params = models.SearchParams(
-            hnsw_ef=128,
-            exact=True  
-        )
-        
-        filter_conditions = models.Filter(
-            must=[
-                models.FieldCondition(
-                    key="group_id",
-                    match=models.MatchValue(value=group_id)
-                )
-            ]
-        )
-
-        response = qdrant_client.search(
-            collection_name=client,
-            query_vector=query_embedding,
-            limit=5,
-            search_params=search_params,
-            query_filter=filter_conditions,
-        )
-        
-        return response
-    
-    def get_emb_response(self, llm_provider, text):
-        if llm_provider == RConfig.OPENAI_PROVIDER_NAME:
-            response = openai_models.get_embedding_via_api(RConfig.ADA003_LARGE_NAME, text)
-        else:
-            response = azure_models.get_embedding_via_api(llm_provider, RConfig.ADA003_LARGE_NAME, text)
-        result = []
-        for i in response['data']:
-            result.append(i['embedding'])
-        return result
-    
-    def get_embeddings(self, text, request_body):
-        llm_provider, fallback_providers, _ = get_llm_provider_using_routing_module_for_emb(request_body, RConfig.ADA003_LARGE_NAME)
-        try:
-            result = self.get_emb_response(llm_provider, text)
-            return result
-        except Exception as e1:
-            logger.error(f'In first attempt for ada003 large emb generation: {llm_provider} failed, error: {e1}')
-            for llm_prov in fallback_providers:
-                try:
-                    result = self.get_emb_response(llm_prov, text)
-                    return result
-                except Exception as e2:
-                    logger.error(f'In 2nd attempt for ada003 large emb generation: {llm_prov} failed, error: {e2}')
-        return None
-    
-    def get_shortlisted_intents(self, extracted_intent_descriptions, group_id, request):
-        extracted_intent_descriptions = list(extracted_intent_descriptions.values())
-        new_embedding_list = self.get_embeddings(extracted_intent_descriptions, request)
-        new_embedding_list = np.array(new_embedding_list)
-        intent_set = set()
-        for new_embedding in new_embedding_list:
-            closest_embeddings = self.find_closest_embeddings(new_embedding, group_id)
-            for result in closest_embeddings:
-                intent_set.add(result.payload['intent_id'])
-        shortlist_intent_dict = {key: intent_dict_v2[key] for key in intent_set if key in intent_dict_v2}
-        return shortlist_intent_dict
-    
-    def preprocessing_intent_dict(self, order_status):
-        if CONFIG.INTENT_DICTIONARY_VERSION == 'v1':
-            if order_status == constants.CANCELLED:
-                return cancelled_intents
-            elif order_status == constants.SHIPPED:
-                return shipped_intents
-            elif order_status == constants.DELIVERED:
-                return delivered_intents
-            elif order_status == constants.RETURN:
-                return return_intents
-            elif order_status == constants.ORDERED:
-                return ordered_intents
-            elif order_status == constants.EXCHANGED:
-                return exchanged_intents
-            else:
-                return None
-        elif CONFIG.INTENT_DICTIONARY_VERSION == 'v2':
-            new_intent_dict = dict()
-            for key in intent_helper.keys():
-                if order_status in intent_helper[key]:
-                    new_intent_dict[key] = intent_dict_v2[key]
-            return new_intent_dict
-        else:
-            return None
-        
-    def get_pre_intent_messages(self, system_prompt, user_messages):
-        messages = [{"role": "user","content": str(user_messages)}]
+    if not system_prompt_found:
         messages.insert(0, {
-                "role": "system",
-                "content": system_prompt
-            })
-        return messages
-    
-    def get_intent_messages(self, system_prompt, request):
-        messages = [
-            {
-                "role": m["role"],
-                "content": m["content"]
-            } for m in request["chat"]
-        ]
-        messages.insert(0, {
-                "role": "system",
-                "content": system_prompt
-            })
-        return messages
-    
-    def remap_to_old_intent_ids(self, intent_identifier, order_status):
-        for intent_id in intent_v2_to_v1[intent_identifier]:
-            x = intent_id.split('_')[0]
-            if x == 'exchanged':
-                x = 'exchange'
-            if x == 'deliver':
-                x = 'delivered'
-            x = x.upper()
-            if x == order_status:
-                return intent_id
-        return None
+            "role" : "system",
+            "content" : system_prompt
+        })
 
+    try:
+        response = call_gpt(messages, 0.7, "gpt-3.5-turbo-0125")
+        intent = json.loads(response["choices"][0]["message"]["content"])["intent_id"]
+    except Exception as e:
+        print("Got error while getting intent" + str(e))
+        return "shipped_intent_else"
+    
+    return intent
+    
 
-    def get_intent(self, request, details, scenario=None):
-        chat_string = self.convert_chat_to_string(request['chat'])
-        intent_dict_ = self.preprocessing_intent_dict(scenario) #To change to scenario filtering eventually
-        use_case  = 'intent_detection'
-        request["use_case"] = use_case
-        request["temperature"] = 0.2
-        model_type = RConfig.GPT35_NAME
-        flag = len(intent_dict_.keys())<CONFIG.INTENT_SCALEUP_THRESHOLD
-        if flag:
-            sys_prompt_2 = self.fetch_sys_prompt_2(chat_string, intent_dict_, flag)
-        else:
-            user_messages = self.get_all_user_messages(request['chat'])
-            sys_prompt_1 = self.fetch_sys_prompt_1()
-            request["intent_messages"] = self.get_pre_intent_messages(sys_prompt_1,user_messages)
-            llm_provider, llm_fallback_providers, model_type = get_llm_provider_using_routing_module(request, details, model_type=model_type)
-            response, end_state_llm_provider = llm_service.get_response_from_gpt(llm_provider, llm_fallback_providers, model_type, request, use_case, 'json')
-            extracted_intent_descriptions = ast.literal_eval(response['choices'][0]['message']['content'])
-            shortlisted_intents = self.get_shortlisted_intents(extracted_intent_descriptions, scenario, request) # to replace order_status with group_id = scenario eventually
-            sys_prompt_2 = self.fetch_sys_prompt_2(chat_string, shortlisted_intents, flag, extracted_intents=extracted_intent_descriptions)
+def get_headers():
+    return {
+        'Content-Type': 'application/json'
+    }
+
+def get_order_details():
+    return '''Order ID: 29195428501107968\nSub Order ID: 29195428501107968_1\nCurrent Date: 15th July 2024\nOrder Date: 03rd June 2024\nExpected Delivery Date: 18th July 2024\nOrder Amount: Rs188\nPayment Mode: Cash on Delivery\nUser Name: Priya Yadav\nTracking URL: sh98.com\nProduct Details:\nName: GREEN FASHION FOR WOMEN AND GIRLS FOR TRAVELLING AND FOR TUTION AND COLLEGES \nID: 373607359\nQuantity: 1\nSize: Free Size\nDispatch Date: 05th July 2024'''
+
+def set_sys_prompt_for_next_message(chat_params, intent):
+    order_details = get_order_details()
+    sop = get_shipped_sop(intent)
+    sys_prompt = f"Act as Megha female Meesho customer support exec skilled in basic maths. Introduce yourself if first message. Don't disclose your AI nature. You will be given Order details,Possible Intent and Possible Intent resolution. Address only particular Meesho order related queries using provided Order Details. If the user's latest message aligns or continues the Possible Intent, use Possible Intent Resolution but don't disclose it fully. Otherwise, answer based on order details and available info. Only use factual information from provided data. Apologize and restate policy if unable to fulfill a request. Order Details: {order_details}\nPossible Intent: {intent}\nPossible Intent Resolution: {sop}\n Use 'escalate_to_senior' only if directed in Possible Intent Resolution. If unable to discern intent due to complex language, inform user and utilize 'escalate_to_senior' function. Respond in user's latest language(e.g., Hinglish for Hinglish, English for English; e.g: user says 'mera order kidhar hai', respond in hinglish), concisely in 1-2 sentences. Avoid repeating responses; rephrase if needed. Avoid asking unrelated questions. Before ending the chat, confirm with the user by asking, 'Is there anything else I can assist you with?' If the user confirms no further assistance is needed or explicitly requests to end the chat, then strictly return back 'end chat' as response and nothing else.\n"
+
+    if ("messages" in chat_params):
+        for message in chat_params["messages"]:
+            if "role" in message and message["role"] == "system":
+                message["content"] = sys_prompt
+                return
             
-        request["intent_messages"] = self.get_intent_messages(sys_prompt_2,request)
-        llm_provider, llm_fallback_providers, model_type = get_llm_provider_using_routing_module(request, details, model_type=model_type)
-        response, end_state_llm_provider = llm_service.get_response_from_gpt(llm_provider, llm_fallback_providers, model_type, request, use_case, 'json')    
-        intent_identifier = ast.literal_eval(response['choices'][0]['message']['content'])['intent_id']
-        intent = intent_dict_[intent_identifier]
-        if CONFIG.INTENT_DICTIONARY_VERSION == 'v2': # This will be removed once full scale-up/externalisation logic done
-            intent_identifier = self.remap_to_old_intent_ids(intent_identifier, scenario)
-        return intent, intent_identifier
+        chat_params["messages"].insert(0, {
+            "role" : "system",
+            "content" : sys_prompt
+        })
 
-    def get_intent_details(self, request, details):
-        # scenario = self.get_scenario(details) # to change to new sop_v2 format
-        scenario = details["Order Status"]
-        intent, intent_identifier = self.get_intent(request, details, scenario)
-        return intent_identifier
+class ChatGPTAgent(RespondAgent[ChatGPTAgentConfigType]):
+    openai_client: Union[AsyncOpenAI, AsyncAzureOpenAI]
+
+    def __init__(
+        self,
+        agent_config: ChatGPTAgentConfigType,
+        action_factory: AbstractActionFactory = DefaultActionFactory(),
+        vector_db_factory=VectorDBFactory(),
+        **kwargs,
+    ):
+        super().__init__(
+            agent_config=agent_config,
+            action_factory=action_factory,
+            **kwargs,
+        )
+        self.openai_client = instantiate_openai_client(
+            agent_config, model_fallback=agent_config.llm_fallback is not None
+        )
+
+        if not self.openai_client.api_key:
+            raise ValueError("OPENAI_API_KEY must be set in environment or passed in")
+
+        if self.agent_config.vector_db_config:
+            self.vector_db = vector_db_factory.create_vector_db(self.agent_config.vector_db_config)
+
+    def get_functions(self):
+        assert self.agent_config.actions
+        if not self.action_factory:
+            return None
+        return [
+            self.action_factory.create_action(action_config).get_openai_function()
+            for action_config in self.agent_config.actions
+            if isinstance(action_config.action_trigger, FunctionCallActionTrigger)
+        ]
+
+    def get_chat_parameters(self, messages: Optional[List] = None, use_functions: bool = True):
+        assert self.transcript is not None
+        is_azure = self._is_azure_model()
+
+        messages = messages or format_openai_chat_messages_from_transcript(
+            self.transcript,
+            self.get_model_name_for_tokenizer(),
+            self.functions,
+            self.agent_config.prompt_preamble,
+        )
+
+        parameters: Dict[str, Any] = {
+            "messages": messages,
+            "max_tokens": self.agent_config.max_tokens,
+            "temperature": self.agent_config.temperature,
+        }
+
+        if is_azure:
+            assert self.agent_config.azure_params is not None
+            parameters["model"] = self.agent_config.azure_params.deployment_name
+        else:
+            parameters["model"] = self.agent_config.model_name
+
+        if use_functions and self.functions:
+            parameters["functions"] = self.functions
+
+        return parameters
+
+    def _is_azure_model(self) -> bool:
+        return self.agent_config.azure_params is not None
+
+    def get_model_name_for_tokenizer(self):
+        if not self.agent_config.azure_params:
+            return self.agent_config.model_name
+        else:
+            return self.agent_config.azure_params.openai_model_name
+
+    def apply_model_fallback(self, chat_parameters: Dict[str, Any]):
+        if self.agent_config.llm_fallback is None:
+            return
+        if self.agent_config.llm_fallback.provider == "openai":
+            self.agent_config.model_name = self.agent_config.llm_fallback.model_name
+            if isinstance(self.openai_client, AsyncAzureOpenAI):
+                self.agent_config.azure_params = None
+        else:
+            if self.agent_config.azure_params:
+                self.agent_config.azure_params.deployment_name = (
+                    self.agent_config.llm_fallback.model_name
+                )
+                if isinstance(self.openai_client, AsyncOpenAI):
+                    # TODO: handle OpenAI fallback to Azure
+                    pass
+
+        self.openai_client = instantiate_openai_client(self.agent_config, model_fallback=False)
+        chat_parameters["model"] = self.agent_config.llm_fallback.model_name
+
+    async def _create_openai_stream_with_fallback(
+        self, chat_parameters: Dict[str, Any]
+    ) -> AsyncGenerator:
+        try:
+            stream = await self.openai_client.chat.completions.create(**chat_parameters)
+        except (NotFoundError, RateLimitError) as e:
+            logger.error(
+                f"{'Model not found' if isinstance(e, NotFoundError) else 'Rate limit error'} for model_name: {chat_parameters.get('model')}. Applying fallback.",
+                exc_info=True,
+            )
+            self.apply_model_fallback(chat_parameters)
+            stream = await self.openai_client.chat.completions.create(**chat_parameters)
+        return stream
+
+    async def _create_openai_stream(self, chat_parameters: Dict[str, Any]) -> AsyncGenerator:
+        if self.agent_config.llm_fallback is not None and self.openai_client.max_retries == 0:
+            stream = await self._create_openai_stream_with_fallback(chat_parameters)
+        else:
+            stream = await self.openai_client.chat.completions.create(**chat_parameters)
+        return stream
+
+    def should_backchannel(self, human_input: str) -> bool:
+        return (
+            not self.is_first_response()
+            and not human_input.strip().endswith("?")
+            and random.random() < self.agent_config.backchannel_probability
+        )
+
+    def choose_backchannel(self) -> Optional[BotBackchannel]:
+        backchannel = None
+        if self.transcript is not None:
+            last_bot_message: Optional[Message] = None
+            for event_log in self.transcript.event_logs[::-1]:
+                if isinstance(event_log, Message) and event_log.sender == Sender.BOT:
+                    last_bot_message = event_log
+                    break
+            if last_bot_message and last_bot_message.text.strip().endswith("?"):
+                return BotBackchannel(text=self.post_question_bot_backchannel_randomizer())
+        return backchannel
+
+    async def generate_response(
+        self,
+        human_input: str,
+        conversation_id: str,
+        is_interrupt: bool = False,
+        bot_was_in_medias_res: bool = False,
+    ) -> AsyncGenerator[GeneratedResponse, None]:
+        assert self.transcript is not None
+
+        chat_parameters = {}
+        if self.agent_config.vector_db_config:
+            try:
+                docs_with_scores = await self.vector_db.similarity_search_with_score(
+                    self.transcript.get_last_user_message()[1]
+                )
+                docs_with_scores_str = "\n\n".join(
+                    [
+                        "Document: "
+                        + doc[0].metadata["source"]
+                        + f" (Confidence: {doc[1]})\n"
+                        + doc[0].lc_kwargs["page_content"].replace(r"\n", "\n")
+                        for doc in docs_with_scores
+                    ]
+                )
+                vector_db_result = (
+                    f"Found {len(docs_with_scores)} similar documents:\n{docs_with_scores_str}"
+                )
+                messages = format_openai_chat_messages_from_transcript(
+                    self.transcript,
+                    self.agent_config.model_name,
+                    self.functions,
+                    self.agent_config.prompt_preamble,
+                )
+                messages.insert(-1, vector_db_result_to_openai_chat_message(vector_db_result))
+                chat_parameters = self.get_chat_parameters(messages)
+            except Exception as e:
+                logger.error(f"Error while hitting vector db: {e}", exc_info=True)
+                chat_parameters = self.get_chat_parameters()
+        else:
+            chat_parameters = self.get_chat_parameters()
+        chat_parameters["stream"] = True
+
+        openai_chat_messages: List = chat_parameters.get("messages", [])
+
+        backchannelled = "false"
+        backchannel: Optional[BotBackchannel] = None
+        if (
+            self.agent_config.use_backchannels
+            and not bot_was_in_medias_res
+            and self.should_backchannel(human_input)
+        ):
+            backchannel = self.choose_backchannel()
+        elif self.agent_config.first_response_filler_message and self.is_first_response():
+            backchannel = BotBackchannel(text=self.agent_config.first_response_filler_message)
+
+        if backchannel is not None:
+            # The LLM needs the backchannel context manually - otherwise we're in a race condition
+            # between sending the response and generating ChatGPT's response
+            openai_chat_messages.append({"role": "assistant", "content": backchannel.text})
+            yield GeneratedResponse(
+                message=backchannel,
+                is_interruptible=True,
+            )
+            backchannelled = "true"
+
+        span_tags = sentry_span_tags.value
+        if span_tags:
+            span_tags["prior_backchannel"] = backchannelled
+            sentry_span_tags.set(span_tags)
+
+        first_sentence_total_span = sentry_create_span(
+            sentry_callable=sentry_sdk.start_span, op=CustomSentrySpans.LLM_FIRST_SENTENCE_TOTAL
+        )
+
+        ttft_span = sentry_create_span(
+            sentry_callable=sentry_sdk.start_span, op=CustomSentrySpans.TIME_TO_FIRST_TOKEN
+        )
+
+        identified_intent = get_intent_from_gpt(chat_parameters.get("messages", []))
+        set_sys_prompt_for_next_message(chat_parameters, identified_intent)
+        asyncio.sleep(0.2)
+
+
+        stream = await self._create_openai_stream(chat_parameters)
+
+        response_generator = collate_response_async
+        using_input_streaming_synthesizer = (
+            self.conversation_state_manager.using_input_streaming_synthesizer()
+        )
+        if using_input_streaming_synthesizer:
+            response_generator = stream_response_async
+        async for message in response_generator(
+            conversation_id=conversation_id,
+            gen=openai_get_tokens(
+                stream,
+            ),
+            get_functions=True,
+            sentry_span=ttft_span,
+        ):
+            if first_sentence_total_span:
+                first_sentence_total_span.finish()
+
+            ResponseClass = (
+                StreamedResponse if using_input_streaming_synthesizer else GeneratedResponse
+            )
+            MessageType = LLMToken if using_input_streaming_synthesizer else BaseMessage
+            if isinstance(message, str):
+                yield ResponseClass(
+                    message=MessageType(text=message),
+                    is_interruptible=True,
+                )
+            else:
+                yield ResponseClass(
+                    message=message,
+                    is_interruptible=True,
+                )

@@ -1,12 +1,13 @@
 import asyncio
 import signal
+import ssl
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from vocode.helpers import create_streaming_microphone_input_and_speaker_output
 from vocode.logging import configure_pretty_logging
-from vocode.streaming.agent.chat_gpt_agent import ChatGPTAgent
-from vocode.streaming.models.agent import ChatGPTAgentConfig
+from vocode.streaming.agent.groq_agent_custom import GroqAgent
+from vocode.streaming.models.agent import GroqAgentConfig
 from vocode.streaming.models.message import BaseMessage
 from vocode.streaming.models.synthesizer import ElevenLabsSynthesizerConfig
 from vocode.streaming.models.transcriber import (
@@ -29,6 +30,7 @@ class Settings(BaseSettings):
     openai_api_key: str = "ENTER_YOUR_OPENAI_API_KEY_HERE"
     azure_speech_key: str = "ENTER_YOUR_AZURE_KEY_HERE"
     deepgram_api_key: str = "ENTER_YOUR_DEEPGRAM_API_KEY_HERE"
+    GROQ_API_KEY: str = "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"
 
     azure_speech_region: str = "eastus"
 
@@ -50,6 +52,7 @@ async def main():
         speaker_output,
     ) = create_streaming_microphone_input_and_speaker_output(
         use_default_devices=False,
+        use_blocking_speaker_output=True,
     )
 
     conversation = StreamingConversation(
@@ -61,17 +64,18 @@ async def main():
                 api_key=settings.deepgram_api_key,
             ),
         ),
-        agent=ChatGPTAgent(
-            ChatGPTAgentConfig(
-                openai_api_key=settings.openai_api_key,
-                initial_message=BaseMessage(text="What up"),
+        agent=GroqAgent(
+            GroqAgentConfig(
+                api_key=settings.GROQ_API_KEY,
+                initial_message=BaseMessage(text="Hi Welcome to meesho, How can I help you today"),
                 prompt_preamble="""The AI is having a pleasant conversation about life""",
+                model_name="llama3-70b-8192",
+                temperature=0.6,
+                max_tokens=250
             )
         ),
         synthesizer=ElevenLabsSynthesizer(
-            ElevenLabsSynthesizerConfig.from_output_device(speaker_output),
-            azure_speech_key=settings.azure_speech_key,
-            azure_speech_region=settings.azure_speech_region,
+            ElevenLabsSynthesizerConfig.from_output_device(speaker_output)
         ),
     )
     await conversation.start()
@@ -83,4 +87,5 @@ async def main():
 
 
 if __name__ == "__main__":
+    # ssl._create_default_https_context = ssl._create_unverified_context
     asyncio.run(main())

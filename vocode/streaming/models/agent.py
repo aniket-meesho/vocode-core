@@ -156,7 +156,7 @@ class ChatVertexAIAgentConfig(AgentConfig, type=AgentType.CHAT_VERTEX_AI.value):
 
 
 class GroqAgentConfig(AgentConfig, type=AgentType.GROQ.value):  # type: ignore
-    groq_api_key: Optional[str] = None
+    groq_api_key: Optional[str] = ""
     prompt_preamble: str
     model_name: str = GROQ_DEFAULT_MODEL_NAME
     temperature: float = LLM_AGENT_DEFAULT_TEMPERATURE

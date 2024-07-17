@@ -95,19 +95,19 @@ class GoogleSynthesizerConfig(SynthesizerConfig, type=SynthesizerType.GOOGLE.val
     speaking_rate: float = DEFAULT_GOOGLE_SPEAKING_RATE
 
 
-ELEVEN_LABS_ADAM_VOICE_ID = "pNInz6obpgDQGcFmaJgB"
+ELEVEN_LABS_ADAM_VOICE_ID = "GZ3Hi1H18rjafEpcFuIN"
 
 
 class ElevenLabsSynthesizerConfig(
     SynthesizerConfig, type=SynthesizerType.ELEVEN_LABS.value  # type: ignore
 ):
-    api_key: Optional[str] = None
+    api_key: Optional[str] = "sk_40b3c6f7619c8866657ff13b91579ad72ebfbfd8941393bb"
     voice_id: Optional[str] = ELEVEN_LABS_ADAM_VOICE_ID
-    optimize_streaming_latency: Optional[int]
+    optimize_streaming_latency: Optional[int] = 2
     experimental_streaming: bool = False
     stability: Optional[float]
     similarity_boost: Optional[float]
-    model_id: Optional[str]
+    model_id: Optional[str] =  "eleven_multilingual_v2"
     experimental_websocket: bool = False
     backchannel_amplitude_factor: float = 0.5
 

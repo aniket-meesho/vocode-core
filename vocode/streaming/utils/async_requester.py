@@ -1,3 +1,5 @@
+import ssl
+
 import aiohttp
 import httpx
 
@@ -7,7 +9,7 @@ from vocode.streaming.utils.singleton import Singleton
 class AsyncRequestor(Singleton):
     def __init__(self):
         self.session = aiohttp.ClientSession()
-        self.async_client = httpx.AsyncClient()
+        self.async_client = httpx.AsyncClient(verify=False)
 
     def get_session(self):
         if self.session.closed:

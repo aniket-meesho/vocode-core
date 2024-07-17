@@ -727,13 +727,13 @@ files = [
 
 [[package]]
 name = "elevenlabs"
-version = "1.3.1"
+version = "1.4.1"
 description = ""
 optional = false
 python-versions = "<4.0,>=3.8"
 files = [
-    {file = "elevenlabs-1.3.1-py3-none-any.whl", hash = "sha256:96cb48d3527393b0f56fb9c6a26ad6520e2999a4c1ac9ca2b525ab7a26ea7342"},
-    {file = "elevenlabs-1.3.1.tar.gz", hash = "sha256:23df9b48960bc1d48b9fe13a5dad74144a83ce5ed83708dd7dcf6180f44ce697"},
+    {file = "elevenlabs-1.4.1-py3-none-any.whl", hash = "sha256:844fa386822746f2b37e4a4d29d72f42877bcbcaee71a99a140349419160940e"},
+    {file = "elevenlabs-1.4.1.tar.gz", hash = "sha256:8df9e252f2bb11b2d0175071661c716238e9074e66eaf5d0c52aeab6b6fd39ad"},
 ]
 
 [package.dependencies]
@@ -1396,7 +1396,7 @@ test = ["objgraph", "psutil"]
 name = "groq"
 version = "0.9.0"
 description = "The official Python library for the groq API"
-optional = true
+optional = false
 python-versions = ">=3.7"
 files = [
     {file = "groq-0.9.0-py3-none-any.whl", hash = "sha256:d0e46f4ad645504672bb09c8100af3ced3a7db0d5119dc13e4aca535fc455874"},
@@ -4729,4 +4729,4 @@ transcribers = ["google-cloud-speech"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<4.0"
-content-hash = "f2d5fe214311ec582efd7760aa25147f11567ddfa1b4ca8ee8088e5798336d8f"
+content-hash = "a74bf70f5c93192761978f65541e730465c7012557aff80101e0a1f402a62499"

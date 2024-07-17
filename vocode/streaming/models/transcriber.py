@@ -117,14 +117,16 @@ class TranscriberConfig(TypedModel, type=TranscriberType.BASE.value):  # type: i
 
 
 class DeepgramTranscriberConfig(TranscriberConfig, type=TranscriberType.DEEPGRAM.value):  # type: ignore
-    language: Optional[str] = None
-    model: Optional[str] = "nova"
+    language: Optional[str] = "hi-Latn"
+    model: Optional[str] = "nova-2"
     tier: Optional[str] = None
     version: Optional[str] = None
     keywords: Optional[list] = None
-    api_key: Optional[str] = None
+    api_key: Optional[str] = "b8abda9db0f841cfcd65779dc44697dad512caf8"
     on_prem: bool = False
     ws_url: str = DEEPGRAM_API_WS_URL
+    smart_format: bool = True
+    detect_language: bool = True
 
 
 class GladiaTranscriberConfig(TranscriberConfig, type=TranscriberType.GLADIA.value):  # type: ignore

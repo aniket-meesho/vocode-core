@@ -1,5 +1,6 @@
 import asyncio
 import json
+import ssl
 from datetime import datetime, timezone
 from typing import List, Optional, Tuple, Union
 from urllib.parse import urlencode
@@ -22,6 +23,10 @@ from vocode.streaming.models.transcriber import (
 )
 from vocode.streaming.transcriber.base_transcriber import BaseAsyncTranscriber
 from vocode.utils.sentry_utils import CustomSentrySpans, sentry_configured, sentry_create_span
+
+ssl_context = ssl.create_default_context()
+ssl_context.check_hostname = False
+ssl_context.verify_mode = ssl.CERT_NONE
 
 PUNCTUATION_TERMINATORS = [".", "!", "?"]
 NUM_RESTARTS = 2
@@ -402,7 +407,7 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
         logger.info(f"Connecting to Deepgram at {deepgram_url}")
 
         try:
-            async with websockets.connect(deepgram_url, extra_headers=extra_headers, timeout=10, ping_interval=1, open_timeout=10) as ws:
+            async with websockets.connect(deepgram_url, extra_headers=extra_headers, ssl=ssl_context, timeout=100, ping_interval=10, open_timeout=100) as ws:
                 logger.debug('🟢 Successfully opened connection')
                 logger.debug(f'Request ID: {ws.response_headers["dg-request-id"]}')
                 self.connected_ts = now()

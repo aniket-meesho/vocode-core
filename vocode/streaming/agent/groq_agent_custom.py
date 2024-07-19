@@ -337,7 +337,7 @@ def get_shipped_sop(intent):
     current_date = "18-07-2024"
     cancel_mark_date = "15-07-2024"
 
-    return sops[intent]["resoulution"].format(expected_delivery_date=expected_delivery_date,
+    return sops[intent]["resolution"].format(expected_delivery_date=expected_delivery_date,
                                                  current_date=current_date,
                                                  cancel_mark_date=cancel_mark_date
                                                  )
@@ -393,7 +393,8 @@ def get_intent_from_gpt(messages):
 
 def get_headers():
     return {
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        "Authorization": "Bearer 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"
     }
 
 def get_order_details():

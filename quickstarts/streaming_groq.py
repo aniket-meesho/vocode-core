@@ -16,7 +16,7 @@ from vocode.streaming.models.transcriber import (
 )
 from vocode.streaming.streaming_conversation import StreamingConversation
 from vocode.streaming.synthesizer.eleven_labs_synthesizer import ElevenLabsSynthesizer
-from vocode.streaming.transcriber.deepgram_transcriber import DeepgramTranscriber
+from vocode.streaming.transcriber.deepgram_transcriber_1 import DeepgramTranscriber
 
 configure_pretty_logging()
 

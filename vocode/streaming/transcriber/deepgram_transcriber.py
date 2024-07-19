@@ -170,10 +170,13 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
 
     async def _run_loop(self):
         restarts = 0
-        while not self._ended and restarts < NUM_RESTARTS:
+        try :
+            while not self._ended and restarts < NUM_RESTARTS:
+                await self.process()
+                restarts += 1
+                logger.debug(f"Deepgram connection died, restarting, num_restarts: {restarts}")
+        except:
             await self.process()
-            restarts += 1
-            logger.debug(f"Deepgram connection died, restarting, num_restarts: {restarts}")
 
         logger.error("Deepgram connection died, not restarting")
 
@@ -528,7 +531,7 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
 
                 await asyncio.gather(sender(ws), receiver(ws))
 
-        except asyncio.exceptions.TimeoutError:
+        except asyncio.exceptions.TimeoutError as e:
             raise
 
     @sentry_configured

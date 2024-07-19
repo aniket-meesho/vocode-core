@@ -393,8 +393,7 @@ def get_intent_from_gpt(messages):
 
 def get_headers():
     return {
-        'Content-Type': 'application/json',
-        "Authorization": "Bearer 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"
+        'Content-Type': 'application/json'
     }
 
 def get_order_details():

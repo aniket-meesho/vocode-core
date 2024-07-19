@@ -24,7 +24,7 @@ from vocode.streaming.transcriber.base_transcriber import BaseAsyncTranscriber
 from vocode.utils.sentry_utils import CustomSentrySpans, sentry_configured, sentry_create_span
 
 PUNCTUATION_TERMINATORS = [".", "!", "?"]
-NUM_RESTARTS = 5
+NUM_RESTARTS = 2
 NUM_AUDIO_CHANNELS = 1
 
 
@@ -123,6 +123,7 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
             "sample_rate": self.transcriber_config.sampling_rate,
             "channels": NUM_AUDIO_CHANNELS,
             "interim_results": "true",
+            
         }
         extra_params = {}
         if self.transcriber_config.language:
@@ -150,6 +151,9 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
             )
         ):
             extra_params["punctuate"] = "true"
+            # extra_params["detect_language"] = "true"
+            extra_params["smart_format"] = "true"
+            extra_params["numerals"] = "true"
         if isinstance(
             self.transcriber_config.endpointing_config,
             DeepgramEndpointingConfig,
@@ -171,13 +175,17 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
     async def _run_loop(self):
         restarts = 0
         while not self._ended and restarts < NUM_RESTARTS:
-            await self.process()
-            restarts += 1
-            logger.debug(f"Deepgram connection died, restarting, num_restarts: {restarts}")
+            try :
+                await self.process()
+                restarts += 1
+                logger.debug(f"Deepgram connection died, restarting, num_restarts: {restarts}")
+            except : 
+                logger.debug(f"Deepgram connection died")
+                # self._run_loop
 
         logger.error("Deepgram connection died, not restarting")
 
-    async def terminate(self):
+    def terminate(self):
         self._track_latency_of_transcription_start()
         # Put this in logs until we sentry metrics show up
         # properly on dashboard
@@ -192,7 +200,7 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
         terminate_msg = json.dumps({"type": "CloseStream"}).encode("utf-8")
         self.consume_nonblocking(terminate_msg)  # todo (dow-107): typing
         self._ended = True
-        await super().terminate()
+        super().terminate()
 
     def get_input_sample_width(self):
         encoding = self.transcriber_config.audio_encoding
@@ -394,7 +402,9 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
         logger.info(f"Connecting to Deepgram at {deepgram_url}")
 
         try:
-            async with websockets.connect(deepgram_url, extra_headers=extra_headers) as ws:
+            async with websockets.connect(deepgram_url, extra_headers=extra_headers, timeout=10, ping_interval=1, open_timeout=10) as ws:
+                logger.debug('🟢 Successfully opened connection')
+                logger.debug(f'Request ID: {ws.response_headers["dg-request-id"]}')
                 self.connected_ts = now()
 
                 async def sender(
@@ -406,6 +416,7 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
                         try:
                             data = await asyncio.wait_for(self._input_queue.get(), 5)
                         except asyncio.exceptions.TimeoutError:
+                            logger.debug('Timeout Error on deepgram')
                             break
 
                         self.audio_cursor += len(data) / byte_rate
@@ -527,8 +538,13 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
                     logger.debug("Terminating Deepgram transcriber receiver")
 
                 await asyncio.gather(sender(ws), receiver(ws))
-
-        except asyncio.exceptions.TimeoutError:
+        except websockets.exceptions.InvalidStatusCode as e:
+            # If the request fails, print both the error message and the request ID from the HTTP headers
+            logger.error(f'🔴 ERROR: Could not connect to Deepgram! {e.headers.get("dg-error")}')
+            logger.error(f'🔴 Please contact Deepgram Support with request ID {e.headers.get("dg-request-id")}')
+        except asyncio.exceptions.TimeoutError as e:
+            logger.error(f'🔴 ERROR: Could not connect to Deepgram! {e.headers.get("dg-error")}')
+            logger.error(f'🔴 Please contact Deepgram Support with request ID {e.headers.get("dg-request-id")}')
             raise
 
     @sentry_configured

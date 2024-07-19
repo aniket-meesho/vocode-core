@@ -33,7 +33,7 @@ class _PlaybackWorker(ThreadAsyncWorker[bytes]):
     def _run_loop(self):
         while not self._ended:
             try:
-                chunk = self.input_janus_queue.sync_q.get(timeout=1)
+                chunk = self.input_janus_queue.sync_q.get(timeout=5000)
                 self.stream.write(np.frombuffer(chunk, dtype=np.int16))
             except queue.Empty:
                 continue

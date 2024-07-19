@@ -186,7 +186,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
 
             if num_words <= LOW_INTERRUPT_SENSITIVITY_BACKCHANNEL_UTTERANCE_LENGTH_THRESHOLD:
                 return True
-            cleaned = re.sub("[^\w\s]", "", transcription.message).strip().lower()
+            cleaned = re.sub(r"\W", "", transcription.message).strip().lower()
             return any(re.fullmatch(regex, cleaned) for regex in BACKCHANNEL_PATTERNS)
 
         def _most_recent_transcript_messages(self) -> Iterator[Message]:
@@ -686,9 +686,11 @@ class StreamingConversation(Generic[OutputDeviceType]):
 
     async def start(self, mark_ready: Optional[Callable[[], Awaitable[None]]] = None):
         self.transcriber.start()
+        self.transcriber.streaming_conversation = self
         self.transcriptions_worker.start()
         self.agent_responses_worker.start()
         self.synthesis_results_worker.start()
+        self.synthesizer.streaming_conversation = self
         self.output_device.start()
         if self.filler_audio_worker is not None:
             self.filler_audio_worker.start()
@@ -1037,6 +1039,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
 
     def is_active(self):
         return not self.is_terminated.is_set()
+        # return True
 
     async def wait_for_termination(self):
         await self.is_terminated.wait()

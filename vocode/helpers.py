@@ -30,6 +30,7 @@ def create_streaming_microphone_input_and_speaker_output(
     output_device_name: Optional[str] = None,
     mic_sampling_rate=None,
     speaker_sampling_rate=None,
+    output_file: Optional[str] = None,
 ):
     return _create_microphone_input_and_speaker_output(
         microphone_class=StreamingMicrophoneInput,
@@ -39,6 +40,7 @@ def create_streaming_microphone_input_and_speaker_output(
         output_device_name=output_device_name,
         mic_sampling_rate=mic_sampling_rate,
         speaker_sampling_rate=speaker_sampling_rate,
+        output_file = output_file,
     )
 
 
@@ -73,6 +75,7 @@ def _create_microphone_input_and_speaker_output(
     output_device_name: Optional[str],
     mic_sampling_rate=None,
     speaker_sampling_rate=None,
+    output_file: Optional[str] = None,
 ) -> Union[
     Tuple[
         StreamingMicrophoneInput,

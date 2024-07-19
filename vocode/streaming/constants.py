@@ -4,7 +4,8 @@ ALLOWED_IDLE_TIME = 15
 SENTENCE_ENDINGS = [".", "!", "?", "\n"]
 CHECK_HUMAN_PRESENT_MESSAGE_CHOICES = [
     "Hello?",
-    "Are you there?",
     "Are you still there?",
     "Hi, are you there?",
+    "kya aap abhee bhee call par hain?",
+    "kya aap call par hain?"
 ]

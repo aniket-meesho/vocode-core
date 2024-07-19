@@ -1,7 +1,9 @@
 import asyncio
+import logging
+import os
 import signal
-import ssl
 
+import aiohttp
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from vocode.helpers import create_streaming_microphone_input_and_speaker_output
@@ -20,6 +22,9 @@ from vocode.streaming.transcriber.deepgram_transcriber import DeepgramTranscribe
 
 configure_pretty_logging()
 
+logging.basicConfig()
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 class Settings(BaseSettings):
     """
@@ -29,7 +34,7 @@ class Settings(BaseSettings):
 
     openai_api_key: str = "ENTER_YOUR_OPENAI_API_KEY_HERE"
     azure_speech_key: str = "ENTER_YOUR_AZURE_KEY_HERE"
-    deepgram_api_key: str = "cd3898ec57d1581c9881355c2874f633436658c8"
+    deepgram_api_key: str = "ENTER_YOUR_DEEPGRAM_API_KEY_HERE"
     GROQ_API_KEY: str = "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"
 
     azure_speech_region: str = "eastus"
@@ -47,12 +52,24 @@ settings = Settings()
 
 
 async def main():
-    (
-        microphone_input,
-        speaker_output,
-    ) = create_streaming_microphone_input_and_speaker_output(
-        use_default_devices=False,
-    )
+
+    async with aiohttp.ClientSession() as session:
+        microphone_input, speaker_output = create_streaming_microphone_input_and_speaker_output(
+            use_default_devices=False,
+            output_file='output_audio.wav'
+        )
+        print("Microphone and speaker initialized")
+
+        elevenlabs_config = ElevenLabsSynthesizerConfig.from_output_device(
+            output_device=speaker_output,
+            api_key="sk_40b3c6f7619c8866657ff13b91579ad72ebfbfd8941393bb"
+        )
+    # (
+    #     microphone_input,
+    #     speaker_output,
+    # ) = create_streaming_microphone_input_and_speaker_output(
+    #     use_default_devices=False,
+    # )
 
     conversation = StreamingConversation(
         output_device=speaker_output,
@@ -73,18 +90,33 @@ async def main():
                 max_tokens=250
             )
         ),
-        synthesizer=ElevenLabsSynthesizer(
-            ElevenLabsSynthesizerConfig.from_output_device(speaker_output)
-        ),
+        synthesizer=ElevenLabsSynthesizer(elevenlabs_config)
     )
+    async def shutdown(signal, loop):
+            await conversation.terminate()
+            loop.stop()
+
+    loop = asyncio.get_running_loop()
+
+    def signal_handler(sig):
+        loop.call_soon_threadsafe(asyncio.create_task, shutdown(sig, loop))
+
+    for s in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(s, signal_handler)
+
     await conversation.start()
     print("Conversation started, press Ctrl+C to end")
-    signal.signal(signal.SIGINT, lambda _0, _1: asyncio.create_task(conversation.terminate()))
+
     while conversation.is_active():
         chunk = await microphone_input.get_audio()
-        conversation.receive_audio(chunk)
+        result = conversation.receive_audio(chunk)
+        if asyncio.iscoroutine(result):
+            await result
+        elif result is not None:
+            print(f"Unexpected result from receive_audio: {result}")
 
 
 if __name__ == "__main__":
-    ssl._create_default_https_context = ssl._create_unverified_context
-    asyncio.run(main())
+    loop = asyncio.SelectorEventLoop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(main())

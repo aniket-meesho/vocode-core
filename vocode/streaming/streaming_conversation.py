@@ -1038,8 +1038,8 @@ class StreamingConversation(Generic[OutputDeviceType]):
         logger.debug("Successfully terminated")
 
     def is_active(self):
-        return not self.is_terminated.is_set()
-        # return True
+        #return not self.is_terminated.is_set()
+        return True
 
     async def wait_for_termination(self):
         await self.is_terminated.wait()

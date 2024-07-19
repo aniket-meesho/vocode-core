@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     openai_api_key: str = "ENTER_YOUR_OPENAI_API_KEY_HERE"
     azure_speech_key: str = "ENTER_YOUR_AZURE_KEY_HERE"
     deepgram_api_key: str = "ENTER_YOUR_DEEPGRAM_API_KEY_HERE"
-    GROQ_API_KEY: str = "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"
+    GROQ_API_KEY: str = "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"
 
     azure_speech_region: str = "eastus"
 

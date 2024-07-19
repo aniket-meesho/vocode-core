@@ -5,9 +5,10 @@ import os
 import random
 from typing import Any, AsyncGenerator, Dict, List, Optional, TypeVar, Union
 
+import groq
 import requests
 import sentry_sdk
-from groq import Groq as AsyncGroq
+from groq import AsyncGroq, Groq
 from loguru import logger
 
 from vocode import sentry_span_tags
@@ -32,6 +33,7 @@ from vocode.utils.sentry_utils import CustomSentrySpans, sentry_create_span
 
 class GroqAgent(RespondAgent[GroqAgentConfig]):
     groq_client: AsyncGroq
+    groq_client_sync : Groq
 
     def __init__(
         self,
@@ -46,6 +48,7 @@ class GroqAgent(RespondAgent[GroqAgentConfig]):
             **kwargs,
         )
         self.groq_client = AsyncGroq(api_key=os.environ.get("GROQ_API_KEY"))
+        self.groq_client_sync = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
         if not self.groq_client.api_key:
             raise ValueError("GROQ_API_KEY must be set in environment or passed in")
@@ -102,9 +105,13 @@ class GroqAgent(RespondAgent[GroqAgentConfig]):
     async def _create_groq_stream(self, chat_parameters: Dict[str, Any]) -> AsyncGenerator:
         try:
             stream = await self.groq_client.chat.completions.create(**chat_parameters)
+        except groq.APIStatusError as e:
+            print("Another non-200-range status code was received")
+            print(e.status_code)
+            print(e.response)
         except Exception as e:
             logger.error(
-                f"Error while hitting Groq with chat_parameters: {chat_parameters}",
+                f"Error while hitting Groq with chat_parameters: {str(chat_parameters)}",
                 exc_info=True,
             )
             raise e
@@ -344,7 +351,7 @@ class GroqAgent(RespondAgent[GroqAgentConfig]):
                                                     )
 
     def get_intent(self, messages, temperature, model_name):
-        response = self.groq_client.chat.completions.create(
+        response = self.groq_client_sync.chat.completions.create(
             messages= messages,
             temperature=temperature,
             model= model_name,

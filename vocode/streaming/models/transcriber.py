@@ -117,8 +117,8 @@ class TranscriberConfig(TypedModel, type=TranscriberType.BASE.value):  # type: i
 
 
 class DeepgramTranscriberConfig(TranscriberConfig, type=TranscriberType.DEEPGRAM.value):  # type: ignore
-    language: Optional[str] = "en-IN"
-    model: Optional[str] = "nova-2"
+    language: Optional[str] = "hi-Latn"
+    model: Optional[str] = "nova"
     tier: Optional[str] = None
     version: Optional[str] = None
     keywords: Optional[list] = None

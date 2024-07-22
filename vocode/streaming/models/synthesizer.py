@@ -96,6 +96,9 @@ class GoogleSynthesizerConfig(SynthesizerConfig, type=SynthesizerType.GOOGLE.val
 
 
 ELEVEN_LABS_ADAM_VOICE_ID = "GZ3Hi1H18rjafEpcFuIN"
+MODEL_MULTILIGUAL_V2 = "eleven_multilingual_v2"
+MODEL_TURBO_V2_5 = "eleven_turbo_v2_5"
+MODEL_TURBO_V2 = "eleven_turbo_v2"
 
 
 class ElevenLabsSynthesizerConfig(
@@ -107,7 +110,7 @@ class ElevenLabsSynthesizerConfig(
     experimental_streaming: bool = False
     stability: Optional[float]
     similarity_boost: Optional[float]
-    model_id: Optional[str] =  "eleven_multilingual_v2"
+    model_id: Optional[str] =  MODEL_TURBO_V2_5
     experimental_websocket: bool = False
     backchannel_amplitude_factor: float = 0.5
 

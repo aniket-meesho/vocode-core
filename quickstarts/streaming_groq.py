@@ -4,9 +4,15 @@ import ssl
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+import os
+import sys
+
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../"))
+
+
 from vocode.helpers import create_streaming_microphone_input_and_speaker_output
 from vocode.logging import configure_pretty_logging
-from vocode.streaming.agent.groq_agent_custom import GroqAgent
+from quickstarts.groq_agent_custom import GroqAgent
 from vocode.streaming.models.agent import GroqAgentConfig
 from vocode.streaming.models.message import BaseMessage
 from vocode.streaming.models.synthesizer import ElevenLabsSynthesizerConfig
@@ -16,10 +22,11 @@ from vocode.streaming.models.transcriber import (
 )
 from vocode.streaming.streaming_conversation import StreamingConversation
 from vocode.streaming.synthesizer.eleven_labs_synthesizer import ElevenLabsSynthesizer
-from vocode.streaming.transcriber.deepgram_transcriber_1 import DeepgramTranscriber
+from quickstarts.deepgram_transcriber_1 import DeepgramTranscriber
 
 configure_pretty_logging()
 
+os.environ["GROQ_API_KEY"] = "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"
 
 class Settings(BaseSettings):
     """
@@ -74,7 +81,7 @@ async def main():
             )
         ),
         synthesizer=ElevenLabsSynthesizer(
-            ElevenLabsSynthesizerConfig.from_output_device(speaker_output)
+            ElevenLabsSynthesizerConfig.from_output_device(speaker_output, api_key="sk_40b3c6f7619c8866657ff13b91579ad72ebfbfd8941393bb")
         ),
     )
     await conversation.start()

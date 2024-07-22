@@ -1,14 +1,10 @@
 import asyncio
+import os
 import signal
 import ssl
-
-from pydantic_settings import BaseSettings, SettingsConfigDict
-
-import os
 import sys
 
-# sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../"))
-
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from vocode.helpers import create_streaming_microphone_input_and_speaker_output
 from vocode.logging import configure_pretty_logging
@@ -23,6 +19,10 @@ from vocode.streaming.models.transcriber import (
 from vocode.streaming.streaming_conversation import StreamingConversation
 from vocode.streaming.synthesizer.eleven_labs_synthesizer import ElevenLabsSynthesizer
 from vocode.streaming.transcriber.deepgram_transcriber_1 import DeepgramTranscriber
+
+# sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../"))
+
+
 
 configure_pretty_logging()
 

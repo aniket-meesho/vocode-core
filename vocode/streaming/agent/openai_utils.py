@@ -2,7 +2,7 @@ from copy import deepcopy
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
 from loguru import logger
-from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
+from groq.types.chat.chat_completion_chunk import ChatCompletionChunk
 
 from vocode.streaming.agent.token_utils import (
     get_chat_gpt_max_tokens,

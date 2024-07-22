@@ -174,7 +174,7 @@ class GroqAgent(RespondAgent[GroqAgentConfig]):
                 chat_parameters = self.get_chat_parameters()
         else:
             chat_parameters = self.get_chat_parameters()
-        # chat_parameters["stream"] = False
+        chat_parameters["stream"] = True
 
         groq_chat_messages: List = chat_parameters.get("messages", [])
 

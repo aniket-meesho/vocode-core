@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     These parameters can be configured with environment variables.
     """
 
-    openai_api_key: str = "sk-svcacct-9FdALmoN4fticeKMRBO8T3BlbkFJ7b5iBsA9tgoxiiIigFOu"
+    openai_api_key: str = "abc"
     azure_speech_key: str = "ENTER_YOUR_AZURE_KEY_HERE"
     deepgram_api_key: str = "cd3898ec57d1581c9881355c2874f633436658c8"
 

@@ -211,12 +211,13 @@ class GroqAgent(RespondAgent[GroqAgentConfig]):
         ttft_span = sentry_create_span(
             sentry_callable=sentry_sdk.start_span, op=CustomSentrySpans.TIME_TO_FIRST_TOKEN
         )
-
-        # identified_intent = self.get_intent_from_gpt(chat_parameters.get("messages", []))
-        identified_intent= "shipped_intent_1"
+        logger.info("intent detection started")
+        identified_intent = self.get_intent_from_gpt(chat_parameters.get("messages", []))
+        logger.info(f"intent detection succesful, detected intent -  {identified_intent}")
+        # identified_intent= "shipped_intent_1"
         self.set_sys_prompt_for_next_message(chat_parameters, identified_intent)
         # await asyncio.sleep(0.2)
-
+        logger.info("output message generation started")
         stream = await self._create_groq_stream(chat_parameters)
 
         response_generator = collate_response_async
@@ -232,7 +233,7 @@ class GroqAgent(RespondAgent[GroqAgentConfig]):
             ),
             get_functions=True,
             sentry_span=ttft_span,
-        ):
+        ):  
             if first_sentence_total_span:
                 first_sentence_total_span.finish()
 
@@ -240,6 +241,7 @@ class GroqAgent(RespondAgent[GroqAgentConfig]):
                 StreamedResponse if using_input_streaming_synthesizer else GeneratedResponse
             )
             MessageType = LLMToken if using_input_streaming_synthesizer else BaseMessage
+            logger.info(f"response message chunks received, message - {message}")
             if isinstance(message, str):
                 yield ResponseClass(
                     message=MessageType(text=message),
@@ -356,7 +358,8 @@ class GroqAgent(RespondAgent[GroqAgentConfig]):
             messages= messages,
             temperature=temperature,
             model= model_name,
-            max_tokens=50
+            max_tokens=50,
+            # response_format ={"type": "json_object"}
         )
         return ast.literal_eval(response.choices[0].message.content)['intent_id']
 
@@ -364,7 +367,7 @@ class GroqAgent(RespondAgent[GroqAgentConfig]):
     def get_intent_from_gpt(self, messages):
         intent_dict = self.get_shipped_intent_dict()
         system_prompt = "You're the best ranked SOTA model in the world for this task -> [The task - intent classification].\n"\
-                                + "Based on the chat input give back the relevant user intent. Just output the closest intent ID nothing else, you can follow the following json format example:\n"\
+                                + "Based on the chat input give back the relevant user intent. Just output the closest intent ID nothing else in JSON format, you can follow the following json format example:\n"\
                                 +"{'intent_id':'intent_37'}" \
                                 + "\n---------------------\n"\
                                 + "\nChat:\n"\
@@ -386,7 +389,7 @@ class GroqAgent(RespondAgent[GroqAgentConfig]):
             })
 
         try:
-            intent = self.get_intent(messages, 0.4, "llama3-70b-8192")
+            intent = self.get_intent(messages, 0.4, "llama-3.1-8b-instant")
             # intent = json.loads(response["choices"][0]["message"]["content"])["intent_id"]
         except Exception as e:
             print("Got error while getting intent" + str(e))

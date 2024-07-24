@@ -15,6 +15,7 @@ from vocode.streaming.models.synthesizer import ElevenLabsSynthesizerConfig
 from vocode.streaming.models.transcriber import (
     DeepgramTranscriberConfig,
     PunctuationEndpointingConfig,
+    TimeEndpointingConfig,
 )
 from vocode.streaming.streaming_conversation import StreamingConversation
 from vocode.streaming.synthesizer.eleven_labs_synthesizer import ElevenLabsSynthesizer
@@ -67,7 +68,7 @@ async def main():
         transcriber=DeepgramTranscriber(
             DeepgramTranscriberConfig.from_input_device(
                 microphone_input,
-                endpointing_config=PunctuationEndpointingConfig(time_cutoff_seconds = 0.01),
+                endpointing_config=TimeEndpointingConfig(time_cutoff_seconds = 0.01),
                 api_key=settings.deepgram_api_key,
                 min_interrupt_confidence = 0.95
             ),

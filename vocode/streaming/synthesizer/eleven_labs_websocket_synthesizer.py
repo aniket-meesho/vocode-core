@@ -227,6 +227,7 @@ class ElevenLabsWSSynthesizer(
                             continue
                         response = ElevenLabsWebsocketResponse.model_validate_json(message)
                         if response.audio:
+                            logger.info("getting audio chunks from 11 labs")
                             decoded = base64.b64decode(response.audio)
                             seconds = len(decoded) / (
                                 self.sample_width * self.synthesizer_config.sampling_rate

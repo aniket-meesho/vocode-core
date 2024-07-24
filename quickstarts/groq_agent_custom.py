@@ -104,6 +104,7 @@ class GroqAgent(RespondAgent[GroqAgentConfig]):
 
     async def _create_groq_stream(self, chat_parameters: Dict[str, Any]) -> AsyncGenerator:
         try:
+            logger.info("request sent for chat completion")
             stream = await self.groq_client.chat.completions.create(**chat_parameters)
         except groq.APIStatusError as e:
             print("Another non-200-range status code was received")
@@ -115,6 +116,7 @@ class GroqAgent(RespondAgent[GroqAgentConfig]):
                 exc_info=True,
             )
             raise e
+        logger.info("stream started for chat completion")
         return stream
 
     def should_backchannel(self, human_input: str) -> bool:
@@ -211,8 +213,9 @@ class GroqAgent(RespondAgent[GroqAgentConfig]):
         ttft_span = sentry_create_span(
             sentry_callable=sentry_sdk.start_span, op=CustomSentrySpans.TIME_TO_FIRST_TOKEN
         )
-
+        logger.info("intent detection started")
         identified_intent = self.get_intent_from_gpt(chat_parameters.get("messages", []))
+        logger.info(f"intent detection ended, identified_intent is {identified_intent}")
         self.set_sys_prompt_for_next_message(chat_parameters, identified_intent)
         # await asyncio.sleep(0.2)
 
@@ -239,6 +242,7 @@ class GroqAgent(RespondAgent[GroqAgentConfig]):
                 StreamedResponse if using_input_streaming_synthesizer else GeneratedResponse
             )
             MessageType = LLMToken if using_input_streaming_synthesizer else BaseMessage
+            logger.info(f"getting message chunks, message is {message}")
             if isinstance(message, str):
                 yield ResponseClass(
                     message=MessageType(text=message),

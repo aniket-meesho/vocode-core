@@ -261,7 +261,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                         "Switching to non-first transcription endpointing config if configured"
                     )
                     self.deepgram_transcriber.is_first_transcription = False
-                logger.debug(
+                logger.info(
                     "Got transcription: {}, confidence: {}, wpm: {}".format(
                         transcription.message,
                         transcription.confidence,
@@ -275,7 +275,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 self.has_associated_unignored_utterance = not transcription.is_final
                 if self.conversation.current_transcription_is_interrupt:
                     logger.debug("sent interrupt")
-                logger.debug("Human started speaking")
+                logger.info("Human started speaking")
 
             transcription.is_interrupt = self.conversation.current_transcription_is_interrupt
             self.conversation.is_human_speaking = not transcription.is_final
@@ -473,7 +473,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                     self.conversation.synthesizer,
                     InputStreamingSynthesizer,
                 ) and isinstance(agent_response_message.message, LLMToken):
-                    logger.debug("Sending chunk to synthesizer")
+                    logger.info("Sending chunk to synthesizer")
                     await self.conversation.synthesizer.send_token_to_synthesizer(
                         message=agent_response_message.message,
                         chunk_size=self.chunk_size,

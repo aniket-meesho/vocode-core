@@ -35,7 +35,7 @@ class SpeedManager:
             )
             self.wpm = self.wpm * (1 - p_t) + transcription_wpm * p_t
             self.speed_coefficient = self.wpm / BASE_WPM
-            logger.info(f"Set speed coefficient to {self.speed_coefficient}")
+            logger.debug(f"Set speed coefficient to {self.speed_coefficient}")
 
     def get_speed_coefficient(self):
         return self.speed_coefficient

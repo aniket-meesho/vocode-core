@@ -12,10 +12,12 @@ from vocode.streaming.models.synthesizer import AzureSynthesizerConfig, ElevenLa
 from vocode.streaming.models.transcriber import (
     DeepgramTranscriberConfig,
     PunctuationEndpointingConfig,
+    TimeEndpointingConfig,
 )
 from vocode.streaming.streaming_conversation import StreamingConversation
 from vocode.streaming.synthesizer.azure_synthesizer import AzureSynthesizer
 from vocode.streaming.synthesizer.eleven_labs_synthesizer import ElevenLabsSynthesizer
+from vocode.streaming.synthesizer.eleven_labs_websocket_synthesizer import ElevenLabsWSSynthesizer
 from vocode.streaming.transcriber.deepgram_transcriber_1 import DeepgramTranscriber
 
 configure_pretty_logging()
@@ -27,7 +29,7 @@ class Settings(BaseSettings):
     These parameters can be configured with environment variables.
     """
 
-    openai_api_key: str = "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"
+    openai_api_key: str = "sk-svcacct-9FdALmoN4fticeKMRBO8T3BlbkFJ7b5iBsA9tgoxiiIigFOu"
     azure_speech_key: str = "ENTER_YOUR_AZURE_KEY_HERE"
     deepgram_api_key: str = "cd3898ec57d1581c9881355c2874f633436658c8"
 
@@ -58,8 +60,9 @@ async def main():
         transcriber=DeepgramTranscriber(
             DeepgramTranscriberConfig.from_input_device(
                 microphone_input,
-                endpointing_config=PunctuationEndpointingConfig(),
+                endpointing_config=TimeEndpointingConfig(time_cutoff_seconds = 0.01),
                 api_key=settings.deepgram_api_key,
+                min_interrupt_confidence = 0.95
             ),
         ),
         agent=ChatGPTAgent(
@@ -69,11 +72,14 @@ async def main():
                 prompt_preamble="""The AI is having a pleasant conversation about life""",
                 model_name="gpt-4o-mini",
                 temperature=0.7,
-                max_tokens=200
+                max_tokens=150
             )
         ),
-        synthesizer=ElevenLabsSynthesizer(
-            ElevenLabsSynthesizerConfig.from_output_device(speaker_output, api_key="sk_40b3c6f7619c8866657ff13b91579ad72ebfbfd8941393bb")
+        # synthesizer=ElevenLabsSynthesizer(
+        #     ElevenLabsSynthesizerConfig.from_output_device(speaker_output, api_key="sk_40b3c6f7619c8866657ff13b91579ad72ebfbfd8941393bb")
+        # ),
+        synthesizer=ElevenLabsWSSynthesizer(
+            ElevenLabsSynthesizerConfig.from_output_device(speaker_output, api_key="sk_40b3c6f7619c8866657ff13b91579ad72ebfbfd8941393bb", experimental_websocket=True)
         ),
     )
     await conversation.start()

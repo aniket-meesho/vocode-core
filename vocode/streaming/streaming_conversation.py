@@ -104,7 +104,7 @@ BACKCHANNEL_PATTERNS = [
     r"yeah+",
     "makes sense",
 ]
-LOW_INTERRUPT_SENSITIVITY_BACKCHANNEL_UTTERANCE_LENGTH_THRESHOLD = 3
+LOW_INTERRUPT_SENSITIVITY_BACKCHANNEL_UTTERANCE_LENGTH_THRESHOLD = 1
 
 
 OutputDeviceType = TypeVar("OutputDeviceType", bound=AbstractOutputDevice)
@@ -179,7 +179,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
             num_words = len(transcription.message.strip().split())
             if (
                 self.conversation.agent.get_agent_config().interrupt_sensitivity == "high"
-                and num_words >= 1
+                and num_words >= 3
             ):
                 logger.info(f"High interrupt sensitivity; {num_words} word(s) not a backchannel")
                 return False

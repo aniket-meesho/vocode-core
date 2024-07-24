@@ -214,7 +214,7 @@ class GroqAgent(RespondAgent[GroqAgentConfig]):
 
         identified_intent = self.get_intent_from_gpt(chat_parameters.get("messages", []))
         self.set_sys_prompt_for_next_message(chat_parameters, identified_intent)
-        await asyncio.sleep(0.2)
+        # await asyncio.sleep(0.2)
 
         stream = await self._create_groq_stream(chat_parameters)
 
@@ -385,7 +385,7 @@ class GroqAgent(RespondAgent[GroqAgentConfig]):
             })
 
         try:
-            intent = self.get_intent(messages, 0.4, "llama3-70b-8192")
+            intent = self.get_intent(messages, 0.4, "llama-3.1-8b-instant")
             # intent = json.loads(response["choices"][0]["message"]["content"])["intent_id"]
         except Exception as e:
             print("Got error while getting intent" + str(e))

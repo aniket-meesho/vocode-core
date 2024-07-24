@@ -39,7 +39,7 @@ def now():
 
 class TimeSilentConfig(BaseModel):
     time_cutoff_seconds: float = 1
-    post_punctuation_time_seconds: float = 0.5
+    post_punctuation_time_seconds: float = 0.2
 
 
 class InternalPunctuationEndpointingConfig(  # type: ignore
@@ -108,7 +108,8 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
         self.connected_ts: Optional[datetime] = None
         self.start_sending_ts: Optional[datetime] = None
         self.start_receiving_ts: Optional[datetime] = None
-
+        self.min_interrupt_confidence:Optional[float] = None
+        
         self.is_first_transcription = True
 
     def _get_speed_coefficient(self):

@@ -1,11 +1,12 @@
 import asyncio
 import signal
+import ssl
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from vocode.helpers import create_streaming_microphone_input_and_speaker_output
 from vocode.logging import configure_pretty_logging
-from vocode.streaming.agent.chat_gpt_agent_custom import ChatGPTAgent
+from vocode.streaming.agent.together_llama_agent import ChatGPTAgent as TogetherLlamaAgent
 from vocode.streaming.models.agent import ChatGPTAgentConfig
 from vocode.streaming.models.message import BaseMessage
 from vocode.streaming.models.synthesizer import AzureSynthesizerConfig, ElevenLabsSynthesizerConfig
@@ -15,7 +16,7 @@ from vocode.streaming.models.transcriber import (
 )
 from vocode.streaming.streaming_conversation import StreamingConversation
 from vocode.streaming.synthesizer.azure_synthesizer import AzureSynthesizer
-from vocode.streaming.synthesizer.eleven_labs_synthesizer import ElevenLabsSynthesizer
+from vocode.streaming.synthesizer.eleven_labs_websocket_synthesizer import ElevenLabsWSSynthesizer
 from vocode.streaming.transcriber.deepgram_transcriber_1 import DeepgramTranscriber
 
 configure_pretty_logging()
@@ -27,7 +28,7 @@ class Settings(BaseSettings):
     These parameters can be configured with environment variables.
     """
 
-    openai_api_key: str = "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"
+    openai_api_key: str = "b01dee039d550832a70e89aa632597739d141179cfb456dc5c6eb9df5ade1507"
     azure_speech_key: str = "ENTER_YOUR_AZURE_KEY_HERE"
     deepgram_api_key: str = "cd3898ec57d1581c9881355c2874f633436658c8"
 
@@ -58,22 +59,23 @@ async def main():
         transcriber=DeepgramTranscriber(
             DeepgramTranscriberConfig.from_input_device(
                 microphone_input,
-                endpointing_config=PunctuationEndpointingConfig(),
+                endpointing_config=PunctuationEndpointingConfig(time_cutoff_seconds = 0.01),
                 api_key=settings.deepgram_api_key,
+                min_interrupt_confidence = 0.95
             ),
         ),
-        agent=ChatGPTAgent(
+        agent=TogetherLlamaAgent(
             ChatGPTAgentConfig(
                 openai_api_key=settings.openai_api_key,
                 initial_message=BaseMessage(text="Hi Welcome to meesho, How can I help you today"),
                 prompt_preamble="""The AI is having a pleasant conversation about life""",
-                model_name="gpt-4o-mini",
-                temperature=0.7,
-                max_tokens=200
+                model_name="meta-llama/Meta-Llama-3-8B-Instruct-Turbo",
+                temperature=0.4,
+                max_tokens=150
             )
         ),
-        synthesizer=ElevenLabsSynthesizer(
-            ElevenLabsSynthesizerConfig.from_output_device(speaker_output, api_key="sk_40b3c6f7619c8866657ff13b91579ad72ebfbfd8941393bb")
+        synthesizer=ElevenLabsWSSynthesizer(
+            ElevenLabsSynthesizerConfig.from_output_device(speaker_output, api_key="sk_40b3c6f7619c8866657ff13b91579ad72ebfbfd8941393bb", experimental_websocket=True)
         ),
     )
     await conversation.start()
@@ -85,4 +87,5 @@ async def main():
 
 
 if __name__ == "__main__":
+    ssl._create_default_https_context = ssl._create_unverified_context
     asyncio.run(main())

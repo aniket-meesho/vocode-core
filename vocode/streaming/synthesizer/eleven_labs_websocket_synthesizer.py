@@ -1,6 +1,7 @@
 import asyncio
 import audioop
 import base64
+import ssl
 from typing import AsyncGenerator, List, Optional, Tuple
 
 import numpy as np
@@ -17,7 +18,9 @@ from vocode.streaming.synthesizer.input_streaming_synthesizer import InputStream
 
 NONCE = "071b5f21-3b24-4427-817e-62508007ae60"
 ELEVEN_LABS_BASE_URL = "wss://api.elevenlabs.io/v1/"
-
+ssl_context = ssl.create_default_context()
+ssl_context.check_hostname = False
+ssl_context.verify_mode = ssl.CERT_NONE
 
 # Based on https://github.com/elevenlabs/elevenlabs-python/blob/main/src/elevenlabs/tts.py
 async def string_chunker(string: str) -> AsyncGenerator[str, None]:
@@ -174,95 +177,100 @@ class ElevenLabsWSSynthesizer(
 
         backchannelled = False
 
-        async with websockets.connect(
-            url,
-            extra_headers=headers,
-        ) as ws:
+        try :
 
-            async def write() -> None:
-                nonlocal backchannelled
-                try:
-                    first_message = True
-                    while True:
-                        message = await self.text_chunk_queue.get()
-                        if not message:
-                            break
-                        if first_message and isinstance(message, BotBackchannel):
-                            backchannelled = True
-                        eleven_labs_ws_message = (
-                            ElevenLabsWebsocketMessage(
-                                text=message.text,
-                                flush=not isinstance(message, LLMToken),
-                            ).json()
-                            if not first_message
-                            else ElevenLabsWebsocketFirstMessage(
-                                text=message.text,
-                                voice_settings=self.get_eleven_labs_websocket_voice_settings(),
-                                generation_config=ElevenLabsWebsocketGenerationConfig(
-                                    chunk_length_schedule=[50],
-                                ),
-                                flush=not isinstance(message, LLMToken),
-                                xi_api_key=self.api_key,
-                            ).json(exclude_none=True)
-                        )
-                        await ws.send(eleven_labs_ws_message)
-                        first_message = False
-                finally:
-                    await ws.send(ElevenLabsWebsocketMessage(text="").json())
+            async with websockets.connect(
+                url,
+                extra_headers=headers,
+                ssl=ssl_context, timeout=100, ping_interval=10, open_timeout=100
+            ) as ws:
 
-            async def listen() -> None:
-                """Listen to the websocket for audio data and stream it."""
-
-                first_message = True
-                buffer = bytearray()
-                while True:
-                    message = await ws.recv()
-                    if "audio" not in message:
-                        continue
-                    response = ElevenLabsWebsocketResponse.model_validate_json(message)
-                    if response.audio:
-                        decoded = base64.b64decode(response.audio)
-                        seconds = len(decoded) / (
-                            self.sample_width * self.synthesizer_config.sampling_rate
-                        )
-
-                        if self.upsample:
-                            decoded = self._resample_chunk(
-                                decoded,
-                                self.sample_rate,
-                                self.upsample,
+                async def write() -> None:
+                    nonlocal backchannelled
+                    try:
+                        first_message = True
+                        while True:
+                            message = await self.text_chunk_queue.get()
+                            if not message:
+                                break
+                            if first_message and isinstance(message, BotBackchannel):
+                                backchannelled = True
+                            eleven_labs_ws_message = (
+                                ElevenLabsWebsocketMessage(
+                                    text=message.text,
+                                    flush=not isinstance(message, LLMToken),
+                                ).json()
+                                if not first_message
+                                else ElevenLabsWebsocketFirstMessage(
+                                    text=message.text,
+                                    voice_settings=self.get_eleven_labs_websocket_voice_settings(),
+                                    generation_config=ElevenLabsWebsocketGenerationConfig(
+                                        chunk_length_schedule=[50, 80, 120, 160],
+                                    ),
+                                    flush=not isinstance(message, LLMToken),
+                                    xi_api_key=self.api_key,
+                                ).json(exclude_none=True)
                             )
-                            seconds = len(decoded) / (self.sample_width * self.sample_rate)
-
-                        if response.alignment:
-                            utterance_chunk = "".join(response.alignment.chars) + " "
-                            self.current_turn_utterances_by_chunk.append((utterance_chunk, seconds))
-                        # For backchannels, send them all as one chunk (so it can't be interrupted) and reduce the volume
-                        # so that in the case of a false endpoint, the backchannel is not too loud.
-                        if first_message and backchannelled:
-                            buffer.extend(decoded)
-                            logger.info("First message was a backchannel, reducing volume.")
-                            reduced_amplitude_buffer = self.reduce_chunk_amplitude(
-                                buffer, factor=self.synthesizer_config.backchannel_amplitude_factor
-                            )
-                            await self.voice_packet_queue.put(reduced_amplitude_buffer)
-                            buffer = bytearray()
+                            await ws.send(eleven_labs_ws_message)
                             first_message = False
-                        else:
-                            buffer.extend(decoded)
-                            for chunk_idx in range(0, len(buffer) - chunk_size, chunk_size):
-                                await self.voice_packet_queue.put(
-                                    buffer[chunk_idx : chunk_idx + chunk_size]
+                    finally:
+                        await ws.send(ElevenLabsWebsocketMessage(text="").json())
+
+                async def listen() -> None:
+                    """Listen to the websocket for audio data and stream it."""
+
+                    first_message = True
+                    buffer = bytearray()
+                    while True:
+                        message = await ws.recv()
+                        if "audio" not in message:
+                            continue
+                        response = ElevenLabsWebsocketResponse.model_validate_json(message)
+                        if response.audio:
+                            decoded = base64.b64decode(response.audio)
+                            seconds = len(decoded) / (
+                                self.sample_width * self.synthesizer_config.sampling_rate
+                            )
+
+                            if self.upsample:
+                                decoded = self._resample_chunk(
+                                    decoded,
+                                    self.sample_rate,
+                                    self.upsample,
                                 )
-                            buffer = buffer[len(buffer) - (len(buffer) % chunk_size) :]
+                                seconds = len(decoded) / (self.sample_width * self.sample_rate)
 
-                    if response.isFinal:
-                        await self.voice_packet_queue.put(None)
-                        break
+                            if response.alignment:
+                                utterance_chunk = "".join(response.alignment.chars) + " "
+                                self.current_turn_utterances_by_chunk.append((utterance_chunk, seconds))
+                            # For backchannels, send them all as one chunk (so it can't be interrupted) and reduce the volume
+                            # so that in the case of a false endpoint, the backchannel is not too loud.
+                            if first_message and backchannelled:
+                                buffer.extend(decoded)
+                                logger.info("First message was a backchannel, reducing volume.")
+                                reduced_amplitude_buffer = self.reduce_chunk_amplitude(
+                                    buffer, factor=self.synthesizer_config.backchannel_amplitude_factor
+                                )
+                                await self.voice_packet_queue.put(reduced_amplitude_buffer)
+                                buffer = bytearray()
+                                first_message = False
+                            else:
+                                buffer.extend(decoded)
+                                for chunk_idx in range(0, len(buffer) - chunk_size, chunk_size):
+                                    await self.voice_packet_queue.put(
+                                        buffer[chunk_idx : chunk_idx + chunk_size]
+                                    )
+                                buffer = buffer[len(buffer) - (len(buffer) % chunk_size) :]
 
-            self.websocket_tasks["listener"] = asyncio.create_task(listen())
-            self.websocket_tasks["writer"] = asyncio.create_task(write())
-            self.websocket_functions = await asyncio.gather(*self.websocket_tasks.values())
+                        if response.isFinal:
+                            await self.voice_packet_queue.put(None)
+                            break
+
+                self.websocket_tasks["listener"] = asyncio.create_task(listen())
+                self.websocket_tasks["writer"] = asyncio.create_task(write())
+                self.websocket_functions = await asyncio.gather(*self.websocket_tasks.values())
+        except Exception as e:
+            logger.debug(e)
 
     def get_current_utterance_synthesis_result(self):
         return SynthesisResult(

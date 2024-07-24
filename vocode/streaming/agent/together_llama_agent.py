@@ -46,7 +46,7 @@ def instantiate_openai_client(agent_config: ChatGPTAgentConfig, model_fallback: 
             logger.info(f"Using OpenAI base URL override: {agent_config.base_url_override}")
         return AsyncOpenAI(
             api_key=agent_config.openai_api_key or os.environ["OPENAI_API_KEY"],
-            base_url=agent_config.base_url_override or "https://api.openai.com/v1",
+            base_url=agent_config.base_url_override or "https://api.together.xyz/v1",
             max_retries=0 if model_fallback else OPENAI_DEFAULT_MAX_RETRIES,
         )
 
@@ -152,14 +152,14 @@ def get_shipped_sop(intent):
                                                  )
 
 def call_gpt(messages, temperature, model_name):
-    completion_url = "https://api.openai.com/v1/chat/completions"
+    completion_url = "https://api.together.xyz/v1/chat/completions"
     headers = get_headers()
     llm_request_data = {
         'model': model_name,
         'temperature': temperature,
         'messages': messages,
         'max_tokens': 50,
-        'response_format': { "type": "json_object" }
+        # 'response_format': { "type": "json_object" }
     }
 
     response = requests.post(completion_url, headers=headers, json=llm_request_data, timeout=60)
@@ -191,7 +191,7 @@ def get_intent_from_gpt(messages):
         })
 
     try:
-        response = call_gpt(messages, 0.4, "gpt-4o-mini")
+        response = call_gpt(messages, 0.4, "meta-llama/Meta-Llama-3-8B-Instruct-Turbo")
         intent = json.loads(response["choices"][0]["message"]["content"])["intent_id"]
     except Exception as e:
         print("Got error while getting intent" + str(e))
@@ -203,7 +203,7 @@ def get_intent_from_gpt(messages):
 def get_headers():
     return {
         'Content-Type': 'application/json',
-        'Authorization': 'Bearer abc'
+        'Authorization': 'Bearer b01dee039d550832a70e89aa632597739d141179cfb456dc5c6eb9df5ade1507'
     }
 
 def get_order_details():

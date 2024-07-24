@@ -100,7 +100,7 @@ class FillerAudio:
         message: BaseMessage,
         audio_data: bytes,
         synthesizer_config: SynthesizerConfig,
-        is_interruptible: bool = False,
+        is_interruptible: bool = True,
         seconds_per_chunk: int = 1,
     ):
         self.message = message
@@ -273,7 +273,7 @@ class BaseSynthesizer(Generic[SynthesizerConfigType]):
             ),
             synthesizer_config=self.synthesizer_config,
             is_interruptible=True,
-            seconds_per_chunk=2,
+            seconds_per_chunk=1,
         )
 
     def get_cost(self) -> float:

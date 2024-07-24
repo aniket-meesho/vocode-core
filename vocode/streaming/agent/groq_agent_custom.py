@@ -212,9 +212,10 @@ class GroqAgent(RespondAgent[GroqAgentConfig]):
             sentry_callable=sentry_sdk.start_span, op=CustomSentrySpans.TIME_TO_FIRST_TOKEN
         )
 
-        identified_intent = self.get_intent_from_gpt(chat_parameters.get("messages", []))
+        # identified_intent = self.get_intent_from_gpt(chat_parameters.get("messages", []))
+        identified_intent= "shipped_intent_1"
         self.set_sys_prompt_for_next_message(chat_parameters, identified_intent)
-        await asyncio.sleep(0.2)
+        # await asyncio.sleep(0.2)
 
         stream = await self._create_groq_stream(chat_parameters)
 

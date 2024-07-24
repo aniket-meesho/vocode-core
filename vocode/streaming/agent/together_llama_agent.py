@@ -169,7 +169,7 @@ def call_gpt(messages, temperature, model_name):
 def get_intent_from_gpt(messages):
     intent_dict = get_shipped_intent_dict()
     system_prompt = "You're the best ranked SOTA model in the world for this task -> [The task - intent classification].\n"\
-                            + "Based on the chat input give back the relevant user intent. Just output the closest intent ID nothing else, you can follow the following json format example:\n"\
+                            + "Based on the chat input give back the relevant user intent. Just output the closest intent ID in json format nothing else, you can follow the following json format example:\n"\
                             +"{'intent_id':'intent_37'}" \
                             + "\n---------------------\n"\
                             + "\nChat:\n"\
@@ -434,12 +434,14 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfigType]):
             sentry_callable=sentry_sdk.start_span, op=CustomSentrySpans.TIME_TO_FIRST_TOKEN
         )
 
+        logger.info("intent detection started")
         identified_intent = get_intent_from_gpt(chat_parameters.get("messages", []))
+        logger.info(f"intent detection succesful, detected intent -  {identified_intent}")
         # identified_intent= "shipped_intent_1"
         set_sys_prompt_for_next_message(chat_parameters, identified_intent)
         # await asyncio.sleep(0.2)
 
-
+        logger.info("output message generation started")
         stream = await self._create_openai_stream(chat_parameters)
 
         response_generator = collate_response_async
@@ -463,6 +465,7 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfigType]):
                 StreamedResponse if using_input_streaming_synthesizer else GeneratedResponse
             )
             MessageType = LLMToken if using_input_streaming_synthesizer else BaseMessage
+            logger.info(f"response message chunks received, message - {message}")
             if isinstance(message, str):
                 yield ResponseClass(
                     message=MessageType(text=message),

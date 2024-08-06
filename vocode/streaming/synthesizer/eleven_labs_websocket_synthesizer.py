@@ -184,7 +184,7 @@ class ElevenLabsWSSynthesizer(
                 extra_headers=headers,
                 ssl=ssl_context, timeout=100, ping_interval=10, open_timeout=100
             ) as ws:
-
+                logger.info('🟢 Successfully opened connection to 11 labs')
                 async def write() -> None:
                     nonlocal backchannelled
                     try:

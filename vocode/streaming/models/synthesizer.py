@@ -95,28 +95,30 @@ class GoogleSynthesizerConfig(SynthesizerConfig, type=SynthesizerType.GOOGLE.val
     speaking_rate: float = DEFAULT_GOOGLE_SPEAKING_RATE
 
 
-ELEVEN_LABS_ADAM_VOICE_ID = "Z1Wvu4bMSyHOzNUStBEM"
+ELEVEN_LABS_ADAM_VOICE_ID_CLONED = "Z1Wvu4bMSyHOzNUStBEM"
 MODEL_MULTILIGUAL_V2 = "eleven_multilingual_v2"
 MODEL_TURBO_V2_5 = "eleven_turbo_v2_5"
 MODEL_TURBO_V2 = "eleven_turbo_v2"
+ELEVEN_LABS_CHARLIE_VOICE_ID = "IKne3meq5aSn9XLyUdCD"
+ELEVEN_LABS_ADAM_VOICE_ID_AMRUT = "vO7hjeAjmsdlGgUdvPpe"
 
 
 class ElevenLabsSynthesizerConfig(
     SynthesizerConfig, type=SynthesizerType.ELEVEN_LABS.value  # type: ignore
 ):
     api_key: Optional[str] = "sk_40b3c6f7619c8866657ff13b91579ad72ebfbfd8941393bb"
-    voice_id: Optional[str] = ELEVEN_LABS_ADAM_VOICE_ID
+    voice_id: Optional[str] = ELEVEN_LABS_ADAM_VOICE_ID_AMRUT
     optimize_streaming_latency: Optional[int] = 3
     experimental_streaming: bool = False
-    stability: Optional[float] = 0.5
-    similarity_boost: Optional[float] = 0.93
+    stability: Optional[float] = 0.45
+    similarity_boost: Optional[float] = 0.66
     model_id: Optional[str] =  MODEL_TURBO_V2_5
     experimental_websocket: bool = False
     backchannel_amplitude_factor: float = 0.5
 
     @validator("voice_id")
     def set_name(cls, voice_id):
-        return voice_id or ELEVEN_LABS_ADAM_VOICE_ID
+        return voice_id or ELEVEN_LABS_ADAM_VOICE_ID_CLONED
 
     @validator("similarity_boost", always=True)
     def stability_and_similarity_boost_check(cls, similarity_boost, values):

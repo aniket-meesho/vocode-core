@@ -409,7 +409,7 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
 
         try:
             async with websockets.connect(deepgram_url, extra_headers=extra_headers, ssl=ssl_context, timeout=100, ping_interval=10, open_timeout=100) as ws:
-                logger.debug('🟢 Successfully opened connection')
+                logger.info('🟢 Successfully opened connection to deepgram')
                 logger.debug(f'Request ID: {ws.response_headers["dg-request-id"]}')
                 self.connected_ts = now()
 
@@ -546,10 +546,10 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
                 await asyncio.gather(sender(ws), receiver(ws))
         except websockets.exceptions.InvalidStatusCode as e:
             # If the request fails, print both the error message and the request ID from the HTTP headers
-            logger.error(f'🔴 ERROR: Could not connect to Deepgram! {e.headers.get("dg-error")}')
+            logger.info(f'🔴 ERROR: Could not connect to Deepgram! {e.headers.get("dg-error")}')
             logger.error(f'🔴 Please contact Deepgram Support with request ID {e.headers.get("dg-request-id")}')
         except asyncio.exceptions.TimeoutError as e:
-            logger.error(f'🔴 ERROR: Could not connect to Deepgram! {e.headers.get("dg-error")}')
+            logger.info(f'🔴 ERROR: Could not connect to Deepgram! {e.headers.get("dg-error")}')
             logger.error(f'🔴 Please contact Deepgram Support with request ID {e.headers.get("dg-request-id")}')
             raise
 

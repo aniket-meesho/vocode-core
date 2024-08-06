@@ -79,7 +79,7 @@ async def main():
                 initial_message=BaseMessage(text="Hi Welcome to meesho, How can I help you today"),
                 prompt_preamble="""The AI is having a pleasant conversation about life""",
                 model_name="llama-3.1-8b-instant",
-                temperature=0.6,
+                temperature=0.4,
                 max_tokens=150
             )
         ),
